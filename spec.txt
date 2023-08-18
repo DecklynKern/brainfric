@@ -1,0 +1,10 @@
+each line is a new Statement
+
+Number: `[0-9]+`
+String: `".*"`
+
+Type: byte|short|word|Type[Number]
+LiteralPP: Number|String
+
+Statement: ∅|Declaration|
+Declaration: Type Name
