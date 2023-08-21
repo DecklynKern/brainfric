@@ -1,7 +1,8 @@
 brainfric statement grammar specification
 ============================================
 Rules:
-[StatementList]  | [StatementList][Statement]
+[StatementList]  | [StatementList]
+                   [Statement]
 [StatementList]  | [Statement]
 [Statement]      | [Declaration]
 [Statement]      | [Move]
@@ -20,12 +21,32 @@ Rules:
 [Inc]            | inc[Identifier]
 [Dec]            | dec[Identifier][NumberLiteral]
 [Dec]            | dec[Identifier]
-[IdentifierList] | [IdentifierList]
+[IdentifierList] | [IdentifierList],[Identifier]
 [IdentifierList] | [Identifier]
-[Expression]     | [BoolLiteral]
-[Expression]     | [NumberLiteral]
-[Expression]     | [StringLiteral]
+[Identifier]     | [Identifier].[NumberLiteral]
+[Identifier]     | [Identifier].[Identifier]
+[Identifier]     | [Identifier]@[Expression]
+[Expression]     | [Literal]
 [Expression]     | [Identifier]
+[Expression]     | [UnaryOperator][Expression]
+[Expression]     | ([Expression])
+[Expression]     | [Expression][BinaryOperator][Expression]
+[Literal]        | [BoolLiteral]
+[Literal]        | [NumberLiteral]
+[Literal]        | [StringLiteral]
 [BoolLiteral]    | true
 [BoolLiteral]    | false
-[While]          | while[Expression(?)][StatementList]end
+[UnaryOperator]  | ?
+[UnaryOperator]  | #
+[UnaryOperator]  | ##
+[UnaryOperator]  | !
+[BinaryOperator] | +
+[BinaryOperator] | -
+[BinaryOperator] | *
+[BinaryOperator] | /
+[BinaryOperator] | |
+[BinaryOperator] | &
+[While]          | while[Expression]
+                   [StatementList]
+                   end
+============================================
