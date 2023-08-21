@@ -1,6 +1,7 @@
+use crate::error::*;
 use crate::lexer::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataType {
     Bool,
     Byte,
@@ -21,7 +22,7 @@ impl DataType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
     Identifier(String),
     BoolLiteral(bool),
@@ -60,17 +61,38 @@ impl Expression {
         None
 
     }
+
+    fn uses_variable(&self, variable: &String) -> bool {
+        
+        match self {
+            Self::Identifier(name) => *name == *variable,
+            Self::Equals(expr1, expr2) | Self::LessThan(expr1, expr2) | Self::GreaterThan(expr1, expr2) | Self::Add(expr1, expr2) | Self::Subtract(expr1, expr2) =>
+                expr1.uses_variable(variable) || expr2.uses_variable(variable),
+            _ => false
+        }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
     Declaration(String, DataType),
     SetTo(String, Expression),
     Write(Expression),
-    Read(Expression)
+    Read(String)
 }
 
-pub fn parse(tokenized: Vec<Vec<Token>>) -> Vec<Statement> {
+impl Statement {
+
+    pub fn uses_variable(&self, variable: &String) -> bool {
+
+        match self {
+            Self::Write(expression) => expression.uses_variable(variable),
+            _ => false
+        }
+    }
+}
+
+pub fn parse(tokenized: Vec<Vec<Token>>) -> Result<Vec<Statement>, ParserError> {
 
     let mut statements = Vec::new();
 
@@ -91,8 +113,8 @@ pub fn parse(tokenized: Vec<Vec<Token>>) -> Vec<Statement> {
                 }
             }
             Token::Keyword(Keyword::Read) => {
-                if let Some(expression) = Expression::try_parse(&line[1..]) {
-                    statements.push(Statement::Read(expression));
+                if let Token::Identifier(name) = &line[1] {
+                    statements.push(Statement::Read(name.clone()));
                 }
             }
             Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] => {
@@ -114,7 +136,7 @@ pub fn parse(tokenized: Vec<Vec<Token>>) -> Vec<Statement> {
                     continue;
 
                 } else {
-                    todo!()
+                    return Err(ParserError::InvalidStatement)
                 }
             }
             Token::Identifier(name) => if Token::Operator(Operator::SetTo) == line[1] {
@@ -126,6 +148,6 @@ pub fn parse(tokenized: Vec<Vec<Token>>) -> Vec<Statement> {
         }
     }
 
-    statements
+    Ok(statements)
 
 }

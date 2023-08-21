@@ -1,6 +1,4 @@
-pub fn lex(code: &String) -> Vec<Vec<Token>> {
-    return code.split("\n").map(lex_line).collect();
-}
+use crate::error::*;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Keyword {
@@ -111,11 +109,16 @@ pub enum Token {
 enum TokenInitialChar {
     Alphabetic,
     Numeric,
+    Quote,
     Other,
     None
 }
 
-fn lex_line<'a>(line: &str) -> Vec<Token> {
+pub fn lex(code: &String) -> Result<Vec<Vec<Token>>, LexerError> {
+    code.split("\n").map(lex_line).into_iter().collect()
+}
+
+fn lex_line<'a>(line: &str) -> Result<Vec<Token>, LexerError> {
 
     let mut chars: Vec<char> = line.chars().rev().collect();
     chars.insert(0, ' ');
@@ -126,7 +129,8 @@ fn lex_line<'a>(line: &str) -> Vec<Token> {
 
     while let Some(chr) = chars.pop() {
 
-        let token_over = chr.is_whitespace();
+        let token_over = (chr.is_whitespace() && current_token_initial_char != TokenInitialChar::Quote) || chars.is_empty();
+        let mut token_ended = true;
 
         if current_token_initial_char == TokenInitialChar::Alphabetic && 
             (!(chr.is_alphanumeric() || chr == '_') || token_over) {
@@ -148,9 +152,15 @@ fn lex_line<'a>(line: &str) -> Vec<Token> {
                 tokens.push(token);
 
             } else {
-                todo!()
+                return Err(LexerError::InvalidToken(current_token.clone()));
             }
             
+        } else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
+            tokens.push(Token::Literal(Literal::String(current_token[1..].to_string())));
+            current_token.clear();
+            current_token_initial_char = TokenInitialChar::None;
+            continue;
+
         } else if let Some(token) = Separator::try_parse(&current_token) {
             tokens.push(token);
 
@@ -168,43 +178,35 @@ fn lex_line<'a>(line: &str) -> Vec<Token> {
             }
 
         } else if !token_over {
-            
-            current_token_initial_char = if chr.is_alphabetic() {
-                TokenInitialChar::Alphabetic
-
-            } else if chr.is_numeric() {
-                TokenInitialChar::Numeric
-
-            } else {
-                TokenInitialChar::Other
-            };
-
-            current_token.push(chr);
-            continue;
-
+            token_ended = false;
         }
 
-        current_token.clear();
+        if current_token_initial_char == TokenInitialChar::None || token_ended {
 
-        if !chr.is_whitespace() {
-            
+            current_token.clear();
+        
             current_token_initial_char = if chr.is_alphabetic() {
                 TokenInitialChar::Alphabetic
 
             } else if chr.is_numeric() {
                 TokenInitialChar::Numeric
 
+            } else if chr == '"' {
+                TokenInitialChar::Quote
+
+            } else if chr == ' ' {
+                TokenInitialChar::None
+
             } else {
                 TokenInitialChar::Other
             };
+        }
 
+        if !token_over {
             current_token.push(chr);
-
-        } else {
-            current_token_initial_char = TokenInitialChar::None;
         }
     }
 
-    return tokens;
+    Ok(tokens)
 
 }

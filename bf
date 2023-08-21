@@ -1,8 +1,5 @@
-byte x
-x <- 40
-
-write x
-
-read x
-write x
-
+byte a
+a <- 0
+a <- 0
+a <- 5
+a <- 0
