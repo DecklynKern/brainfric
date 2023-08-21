@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::error::*;
+use crate::err;
 use crate::parser::*;
 
 struct Variable {
@@ -17,24 +18,26 @@ enum Memory {
 }
 
 pub struct Compiler {
-    statements: Vec<Statement>,
-    statements_parsed: usize,
+    statements: Vec<(usize, Statement)>,
+    current_line_num: usize,
     compiled: String,
     variables: Vec<Variable>,
-    name_table: HashMap<String, usize>,
+    name_table: HashMap<Name, usize>,
     stack_pointer: usize,
     data_head: usize
 }
 
+type Error = Result<(), BrainFricError>;
+
 impl Compiler {
 
-    pub fn new(mut statements: Vec<Statement>) -> Self {
+    pub fn new(mut statements: Vec<(usize, Statement)>) -> Self {
 
         statements.reverse();
 
         Self {
             statements,
-            statements_parsed: 0,
+            current_line_num: 0,
             compiled: String::new(),
             variables: Vec::new(),
             name_table: HashMap::new(),
@@ -125,7 +128,7 @@ impl Compiler {
         }
     }
 
-    fn free_variable(&mut self, name: &String) {
+    fn free_variable(&mut self, name: &Name) {
         
         let idx = self.name_table.remove(name).unwrap();
         self.clear(Memory::Variable(idx));
@@ -137,17 +140,17 @@ impl Compiler {
         }
     }
 
-    fn has_use(&self, name: &String) -> bool {
-        self.statements.iter().any(|statement| statement.uses_variable(name))
+    fn has_use(&self, name: &Name) -> bool {
+        self.statements.iter().any(|(_, statement)| statement.uses_variable(name))
     }
 
-    fn is_last_use(&self, name: &String) -> bool {
-        self.statements.iter().rposition(|statement|
+    fn is_last_use(&self, name: &Name) -> bool {
+        self.statements.iter().rposition(|(_, statement)|
             statement.uses_variable(name)).is_some_and(|idx| idx == self.statements.len() - 1
         )
     }
 
-    fn handle_declaration(&mut self, name: &String, data_type: DataType) -> Result<(), CompilerError> {
+    fn handle_declaration(&mut self, name: &Name, data_type: DataType) -> Error {
 
         // in theory we check usage but 
                     
@@ -167,7 +170,7 @@ impl Compiler {
 
     }
 
-    fn handle_set_to(&mut self, name: &String, value: Expression) -> Result<(), CompilerError> {
+    fn handle_set_to(&mut self, name: &Name, value: Expression) -> Error {
 
         if let Some(&idx) = self.name_table.get(name) {
 
@@ -192,11 +195,33 @@ impl Compiler {
             }
 
         } else {
-            Err(CompilerError::UnknownIdentifier(name.clone()))
+            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
         }
     }
 
-    fn handle_write(&mut self, expression: Expression) -> Result<(), CompilerError> {
+    fn handle_inc(&mut self, name: &Name) -> Error {
+
+        if let Some(&idx) = self.name_table.get(name) {
+            self.add_const(Memory::Variable(idx), 1);
+            Ok(())
+
+        } else {
+            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
+        }
+    }
+
+    fn handle_dec(&mut self, name: &Name) -> Error {
+
+        if let Some(&idx) = self.name_table.get(name) {
+            self.add_const(Memory::Variable(idx), -1);
+            Ok(())
+
+        } else {
+            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
+        }
+    }
+
+    fn handle_write(&mut self, expression: Expression) -> Error {
 
         if let Expression::Identifier(name) = expression {
     
@@ -243,7 +268,7 @@ impl Compiler {
 
     }
 
-    fn handle_read(&mut self, name: &String) -> Result<(), CompilerError> {
+    fn handle_read(&mut self, name: &Name) -> Error {
 
         if let Some(&idx) = self.name_table.get(name) {
             self.jump_to(Memory::Variable(idx));
@@ -252,13 +277,15 @@ impl Compiler {
             Ok(())
             
         } else {
-            Err(CompilerError::UnknownIdentifier(name.clone()))
+            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
         }
     }
 
-    pub fn compile(&mut self) -> Result<String, CompilerError> {
+    pub fn compile(&mut self) -> Result<String, BrainFricError> {
     
-        while let Some(statement) = self.statements.pop() {
+        while let Some((line_num, statement)) = self.statements.pop() {
+
+            self.current_line_num = line_num;
     
             match statement {
                 Statement::Declaration(name, data_type) => 
@@ -267,15 +294,18 @@ impl Compiler {
                 Statement::SetTo(name, value) => 
                     self.handle_set_to(&name, value)?,
 
+                Statement::Inc(name) =>
+                    self.handle_inc(&name)?,
+
+                Statement::Dec(name) =>
+                    self.handle_dec(&name)?,
+
                 Statement::Write(expression) => 
                     self.handle_write(expression)?,
 
                 Statement::Read(name) => 
-                    self.handle_read(&name)?,
+                    self.handle_read(&name)?
             }
-
-            self.statements_parsed += 1;
-
         }
 
         let mut blank = String::new();

@@ -1,4 +1,5 @@
 use crate::error::*;
+use crate::err;
 use crate::lexer::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,9 +23,11 @@ impl DataType {
     }
 }
 
+pub type Name = String;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
-    Identifier(String),
+    Identifier(Name),
     BoolLiteral(bool),
     NumberLiteral(usize),
     StringLiteral(String),
@@ -62,7 +65,7 @@ impl Expression {
 
     }
 
-    fn uses_variable(&self, variable: &String) -> bool {
+    fn uses_variable(&self, variable: &Name) -> bool {
         
         match self {
             Self::Identifier(name) => *name == *variable,
@@ -75,15 +78,17 @@ impl Expression {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
-    Declaration(String, DataType),
-    SetTo(String, Expression),
+    Declaration(Name, DataType),
+    SetTo(Name, Expression),
     Write(Expression),
-    Read(String)
+    Read(Name),
+    Inc(Name),
+    Dec(Name)
 }
 
 impl Statement {
 
-    pub fn uses_variable(&self, variable: &String) -> bool {
+    pub fn uses_variable(&self, variable: &Name) -> bool {
 
         match self {
             Self::Write(expression) => expression.uses_variable(variable),
@@ -92,11 +97,11 @@ impl Statement {
     }
 }
 
-pub fn parse(tokenized: Vec<Vec<Token>>) -> Result<Vec<Statement>, ParserError> {
+pub fn parse(tokenized: Vec<Vec<Token>>) -> Result<Vec<(usize, Statement)>, BrainFricError> {
 
     let mut statements = Vec::new();
 
-    for line in tokenized {
+    for (line_num, line) in tokenized.iter().enumerate() {
 
         if line.is_empty() {
             continue;
@@ -106,46 +111,67 @@ pub fn parse(tokenized: Vec<Vec<Token>>) -> Result<Vec<Statement>, ParserError> 
             continue;
         }
 
-        match &line[0] {
+        statements.push((line_num, match &line[0] {
+            Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] && keyword.is_type() => {
+
+                if *keyword == Keyword::Bool {
+                    Statement::Declaration(name.clone(), DataType::Bool)
+                    
+                } else if *keyword == Keyword::Byte {
+                    Statement::Declaration(name.clone(), DataType::Byte)
+                
+                } else if *keyword == Keyword::Short {
+                    Statement::Declaration(name.clone(), DataType::Short)
+
+                } else if *keyword == Keyword::Array {
+                    todo!();
+
+                } else {
+                    err!(line_num, ParserError::InvalidStatement);
+                }
+            }
+            Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
+                if let Some(expression) = Expression::try_parse(&line[2..]) {
+                    Statement::SetTo(name.clone(), expression)
+                
+                } else {
+                    err!(line_num, ParserError::InvalidExpression);
+                }
+            }
+            Token::Keyword(Keyword::Inc) => {
+                if let Token::Identifier(name) = &line[1] {
+                    Statement::Inc(name.clone())
+                
+                } else {
+                    err!(line_num, ParserError::ExpectedIdentifier);
+                }
+            }
+            Token::Keyword(Keyword::Dec) => {
+                if let Token::Identifier(name) = &line[1] {
+                    Statement::Dec(name.clone())
+                
+                } else {
+                    err!(line_num, ParserError::ExpectedIdentifier);
+                }
+            }
             Token::Keyword(Keyword::Write) => {
                 if let Some(expression) = Expression::try_parse(&line[1..]) {
-                    statements.push(Statement::Write(expression));
+                    Statement::Write(expression)
+                
+                } else {
+                    err!(line_num, ParserError::InvalidExpression);
                 }
             }
             Token::Keyword(Keyword::Read) => {
                 if let Token::Identifier(name) = &line[1] {
-                    statements.push(Statement::Read(name.clone()));
-                }
-            }
-            Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] => {
-
-                if *keyword == Keyword::Bool {
-                    statements.push(Statement::Declaration(name.clone(), DataType::Bool));
-                    continue;
-                    
-                } else if *keyword == Keyword::Byte {
-                    statements.push(Statement::Declaration(name.clone(), DataType::Byte));
-                    continue;
+                    Statement::Read(name.clone())
                 
-                } else if *keyword == Keyword::Short {
-                    statements.push(Statement::Declaration(name.clone(), DataType::Short));
-                    continue;
-
-                } else if *keyword == Keyword::Array {
-                    todo!();
-                    continue;
-
                 } else {
-                    return Err(ParserError::InvalidStatement)
+                    err!(line_num, ParserError::ExpectedIdentifier);
                 }
             }
-            Token::Identifier(name) => if Token::Operator(Operator::SetTo) == line[1] {
-                if let Some(expression) = Expression::try_parse(&line[2..]) {
-                    statements.push(Statement::SetTo(name.clone(), expression));
-                }
-            }
-            _ => ()
-        }
+            _ => err!(line_num, ParserError::InvalidStatement)
+        }));
     }
 
     Ok(statements)

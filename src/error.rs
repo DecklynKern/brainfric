@@ -1,6 +1,4 @@
-use std::fmt::*;
-
-pub trait BrainFricError {
+pub trait ErrorDesc {
     fn get_description(&self) -> String;
 }
 
@@ -8,13 +6,7 @@ pub enum LexerError {
     InvalidToken(String)
 }
 
-impl Debug for LexerError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.get_description())
-    }
-}
-
-impl BrainFricError for LexerError {
+impl ErrorDesc for LexerError {
 
     fn get_description(&self) -> String {
         format!("Lexer Error: {}", match self {
@@ -24,21 +16,19 @@ impl BrainFricError for LexerError {
 }
 
 pub enum ParserError {
-    InvalidStatement
+    InvalidStatement,
+    InvalidExpression,
+    ExpectedIdentifier
 }
 
-impl BrainFricError for ParserError {
+impl ErrorDesc for ParserError {
 
     fn get_description(&self) -> String {
         format!("Parser Error: {}", match self {
-            Self::InvalidStatement => "Invalid statement"
+            Self::InvalidStatement => format!("Invalid statement"),
+            Self::InvalidExpression => format!("Invalid expression"),
+            Self::ExpectedIdentifier => format!("Expected identifier")
         })
-    }
-}
-
-impl Debug for ParserError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.get_description())
     }
 }
 
@@ -46,7 +36,7 @@ pub enum CompilerError {
     UnknownIdentifier(String)
 }
 
-impl BrainFricError for CompilerError {
+impl ErrorDesc for CompilerError {
 
     fn get_description(&self) -> String {
         format!("Compiler Error: {}", match self {
@@ -55,8 +45,25 @@ impl BrainFricError for CompilerError {
     }
 }
 
-impl Debug for CompilerError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.get_description())
+pub struct BrainFricError {
+    pub line: usize,
+    pub error: Box<dyn ErrorDesc>
+}
+
+impl BrainFricError {
+    
+    pub fn print(&self) {
+        println!("Error on line {}.", self.line);
+        println!("{}", self.error.get_description());
+    }
+}
+
+#[macro_export]
+macro_rules! err {
+    ($line_num:expr, $error:expr) => {
+        return Err(BrainFricError {
+            line: $line_num + 1,
+            error: Box::new($error)
+        })
     }
 }

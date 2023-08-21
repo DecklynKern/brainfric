@@ -5,7 +5,7 @@ use brainfric::*;
 #[test]
 fn basic_lexer_check() {
     assert_eq!(
-        lexer::lex(&"   byte     a   \n  a  <-  240  ".to_string()).unwrap(),
+        lexer::lex(&"   byte     a   \n  a  <-  240  ".to_string()).unwrap_or_else(|_| panic!()),
         vec![
             vec![
                 lexer::Token::Keyword(lexer::Keyword::Byte),
@@ -33,13 +33,13 @@ fn basic_parser_check() {
                 lexer::Token::Operator(lexer::Operator::SetTo),
                 lexer::Token::Literal(lexer::Literal::Number(240))
             ]
-        ]).unwrap(),
+        ]).unwrap_or_else(|_| panic!()),
         vec![
-            parser::Statement::Declaration("a".to_string(), parser::DataType::Byte),
-            parser::Statement::SetTo(
+            (0, parser::Statement::Declaration("a".to_string(), parser::DataType::Byte)),
+            (1, parser::Statement::SetTo(
                 "a".to_string(),
                 parser::Expression::NumberLiteral(240)
-            )
+            ))
         ]
     )
 }
@@ -48,15 +48,15 @@ fn basic_parser_check() {
 fn basic_compiler_check() {
 
     let mut main_compiler = compiler::Compiler::new(vec![
-        parser::Statement::Declaration("a".to_string(), parser::DataType::Byte),
-        parser::Statement::SetTo(
+        (0, parser::Statement::Declaration("a".to_string(), parser::DataType::Byte)),
+        (1, parser::Statement::SetTo(
             "a".to_string(),
             parser::Expression::NumberLiteral(240)
-        )
+        ))
     ]);
 
     assert_eq!(
-        main_compiler.compile().unwrap(),
+        main_compiler.compile().unwrap_or_else(|_| panic!()),
         "----------------".to_string()
     );
 }

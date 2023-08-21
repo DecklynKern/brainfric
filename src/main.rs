@@ -11,12 +11,9 @@ mod lexer;
 mod parser;
 mod compiler;
 
-fn perform_compilation(code: &String) -> Result<String, Box<dyn BrainFricError>> {
+fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
-    let tokenized = match lexer::lex(code) {
-        Ok(tokenized) => tokenized,
-        Err(err) => return Err(Box::new(err))
-    };
+    let tokenized = lexer::lex(code)?;
 
     println!("=== LEXER PASS ===");
     for line in &tokenized {
@@ -24,10 +21,7 @@ fn perform_compilation(code: &String) -> Result<String, Box<dyn BrainFricError>>
     }
     println!();
 
-    let statements = match parser::parse(tokenized) {
-        Ok(statements) => statements,
-        Err(err) => return Err(Box::new(err))
-    };
+    let statements = parser::parse(tokenized)?;
 
     println!("=== PARSER PASS ===");
     for statement in &statements {
@@ -37,10 +31,7 @@ fn perform_compilation(code: &String) -> Result<String, Box<dyn BrainFricError>>
 
     let mut main_compiler = compiler::Compiler::new(statements);
 
-    let compiled = match main_compiler.compile() {
-        Ok(compiled) => compiled,
-        Err(err) => return Err(Box::new(err))
-    };
+    let compiled = main_compiler.compile()?;
 
     println!("=== COMPILER PASS ===");
     println!("{compiled}\n");
@@ -59,7 +50,7 @@ fn main() -> std::io::Result<()> {
     let compiled = match perform_compilation(&code) {
         Ok(compiled) => compiled,
         Err(err) => {
-            println!("{}", err.get_description());
+            err.print();
             return Ok(());
         }
     };

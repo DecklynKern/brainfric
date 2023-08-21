@@ -1,25 +1,42 @@
 use crate::error::*;
+use crate::err;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Keyword {
+    
     Bool,
     Byte,
     Short,
     Array,
+
+    Inc,
+    Dec,
+
     While,
     End,
+
     Write,
     Read
+
 }
 
 impl Keyword {
     
+    pub fn is_type(&self) -> bool {
+        match self {
+            Self::Bool | Self::Byte | Self::Short | Self::Array => true,
+            _ => false
+        }
+    }
+
     fn try_parse(token: &String) -> Option<Token> {
         Some(Token::Keyword(match token.as_str() {
             "bool" => Self::Bool,
             "byte" => Self::Byte,
             "short" => Self::Short,
             "array" => Self::Array,
+            "inc" => Self::Inc,
+            "dec" => Self::Dec,
             "while" => Self::While,
             "end" => Self::End,
             "write" => Self::Write,
@@ -114,11 +131,11 @@ enum TokenInitialChar {
     None
 }
 
-pub fn lex(code: &String) -> Result<Vec<Vec<Token>>, LexerError> {
-    code.split("\n").map(lex_line).into_iter().collect()
+pub fn lex(code: &String) -> Result<Vec<Vec<Token>>, BrainFricError> {
+    code.split("\n").enumerate().map(lex_line).into_iter().collect()
 }
 
-fn lex_line<'a>(line: &str) -> Result<Vec<Token>, LexerError> {
+fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
 
     let mut chars: Vec<char> = line.chars().rev().collect();
     chars.insert(0, ' ');
@@ -152,7 +169,7 @@ fn lex_line<'a>(line: &str) -> Result<Vec<Token>, LexerError> {
                 tokens.push(token);
 
             } else {
-                return Err(LexerError::InvalidToken(current_token.clone()));
+                err!(line_num, LexerError::InvalidToken(current_token.clone()));
             }
             
         } else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
