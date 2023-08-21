@@ -2,6 +2,6 @@
 #![feature(if_let_guard)]
 
 pub mod error;
-pub mod lexer;
-pub mod parser;
-pub mod compiler;
+pub mod lex;
+pub mod parse;
+pub mod compile;

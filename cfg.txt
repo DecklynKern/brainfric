@@ -1,0 +1,31 @@
+brainfric statement grammar specification
+============================================
+Rules:
+[StatementList]  | [StatementList][Statement]
+[StatementList]  | [Statement]
+[Statement]      | [Declaration]
+[Statement]      | [Move]
+[Statement]      | [Set]
+[Statement]      | [Inc]
+[Statement]      | [Dec]
+[Statement]      | [While]
+[Declaration]    | [Type][IdentifierList]
+[Type]           | bool
+[Type]           | byte
+[Type]           | short
+[Type]           | array[Type]
+[Move]           | [IdentifierList]<-[Expression]
+[Set]            | [IdentifierList]<=[Expression]
+[Inc]            | inc[Identifier][NumberLiteral]
+[Inc]            | inc[Identifier]
+[Dec]            | dec[Identifier][NumberLiteral]
+[Dec]            | dec[Identifier]
+[IdentifierList] | [IdentifierList]
+[IdentifierList] | [Identifier]
+[Expression]     | [BoolLiteral]
+[Expression]     | [NumberLiteral]
+[Expression]     | [StringLiteral]
+[Expression]     | [Identifier]
+[BoolLiteral]    | true
+[BoolLiteral]    | false
+[While]          | while[Expression(?)][StatementList]end

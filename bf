@@ -1,6 +1,6 @@
 byte a
-a <- 5
-inc a
-write a
-dec a
-write a
+byte b
+byte c
+a <- 10
+b <- 15
+c <- a

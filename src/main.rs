@@ -7,13 +7,13 @@ use std::io::prelude::*;
 use error::BrainFricError;
 
 mod error;
-mod lexer;
-mod parser;
-mod compiler;
+mod lex;
+mod parse;
+mod compile;
 
 fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
-    let tokenized = lexer::lex(code)?;
+    let tokenized = lex::lex(code)?;
 
     println!("=== LEXER PASS ===");
     for line in &tokenized {
@@ -21,7 +21,8 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     }
     println!();
 
-    let statements = parser::parse(tokenized)?;
+    let mut parser = parse::Parser::new(tokenized);
+    let statements = parser.parse()?;
 
     println!("=== PARSER PASS ===");
     for statement in &statements {
@@ -29,9 +30,8 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     }
     println!();
 
-    let mut main_compiler = compiler::Compiler::new(statements);
-
-    let compiled = main_compiler.compile()?;
+    let mut compiler = compile::Compiler::new(statements);
+    let compiled = compiler.compile()?;
 
     println!("=== COMPILER PASS ===");
     println!("{compiled}\n");

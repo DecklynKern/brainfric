@@ -88,12 +88,16 @@ impl Separator {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operator {
+
+    MoveTo,
     SetTo,
+
     Equals,
     LessThan,
     GreaterThan,
     Plus,
     Minus
+
 }
 
 impl Operator {
@@ -101,7 +105,8 @@ impl Operator {
     fn try_parse(token: &String) -> Option<Token> {
 
         Some(Token::Operator(match token.as_str() {
-            "<-" => Self::SetTo,
+            "<-" => Self::MoveTo,
+            "<=" => Self::SetTo,
             "=" => Self::Equals,
             "<" => Self::LessThan,
             ">" => Self::GreaterThan,

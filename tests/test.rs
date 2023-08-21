@@ -5,16 +5,16 @@ use brainfric::*;
 #[test]
 fn basic_lexer_check() {
     assert_eq!(
-        lexer::lex(&"   byte     a   \n  a  <-  240  ".to_string()).unwrap_or_else(|_| panic!()),
+        lex::lex(&"   byte     a   \n  a  <-  240  ".to_string()).unwrap_or_else(|_| panic!()),
         vec![
             vec![
-                lexer::Token::Keyword(lexer::Keyword::Byte),
-                lexer::Token::Identifier("a".to_string())
+                lex::Token::Keyword(lex::Keyword::Byte),
+                lex::Token::Identifier("a".to_string())
             ],
             vec![
-                lexer::Token::Identifier("a".to_string()),
-                lexer::Token::Operator(lexer::Operator::SetTo),
-                lexer::Token::Literal(lexer::Literal::Number(240))
+                lex::Token::Identifier("a".to_string()),
+                lex::Token::Operator(lex::Operator::MoveTo),
+                lex::Token::Literal(lex::Literal::Number(240))
             ]
         ]
     )
@@ -22,23 +22,26 @@ fn basic_lexer_check() {
 
 #[test]
 fn basic_parser_check() {
-    assert_eq!(
-        parser::parse(vec![
-            vec![
-                lexer::Token::Keyword(lexer::Keyword::Byte),
-                lexer::Token::Identifier("a".to_string())
-            ],
-            vec![
-                lexer::Token::Identifier("a".to_string()),
-                lexer::Token::Operator(lexer::Operator::SetTo),
-                lexer::Token::Literal(lexer::Literal::Number(240))
-            ]
-        ]).unwrap_or_else(|_| panic!()),
+
+    let mut parser = parse::Parser::new(vec![
         vec![
-            (0, parser::Statement::Declaration("a".to_string(), parser::DataType::Byte)),
-            (1, parser::Statement::SetTo(
+            lex::Token::Keyword(lex::Keyword::Byte),
+            lex::Token::Identifier("a".to_string())
+        ],
+        vec![
+            lex::Token::Identifier("a".to_string()),
+            lex::Token::Operator(lex::Operator::SetTo),
+            lex::Token::Literal(lex::Literal::Number(240))
+        ]
+    ]);
+
+    assert_eq!(
+        parser.parse().unwrap_or_else(|_| panic!()),
+        vec![
+            (0, parse::Statement::Declaration("a".to_string(), parse::DataType::Byte)),
+            (1, parse::Statement::SetTo(
                 "a".to_string(),
-                parser::Expression::NumberLiteral(240)
+                parse::Expression::NumberLiteral(240)
             ))
         ]
     )
@@ -47,16 +50,16 @@ fn basic_parser_check() {
 #[test]
 fn basic_compiler_check() {
 
-    let mut main_compiler = compiler::Compiler::new(vec![
-        (0, parser::Statement::Declaration("a".to_string(), parser::DataType::Byte)),
-        (1, parser::Statement::SetTo(
+    let mut compiler = compile::Compiler::new(vec![
+        (0, parse::Statement::Declaration("a".to_string(), parse::DataType::Byte)),
+        (1, parse::Statement::SetTo(
             "a".to_string(),
-            parser::Expression::NumberLiteral(240)
+            parse::Expression::NumberLiteral(240)
         ))
     ]);
 
     assert_eq!(
-        main_compiler.compile().unwrap_or_else(|_| panic!()),
+        compiler.compile().unwrap_or_else(|_| panic!()),
         "----------------".to_string()
     );
 }

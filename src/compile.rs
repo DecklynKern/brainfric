@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::error::*;
 use crate::err;
-use crate::parser::*;
+use crate::parse::*;
 
 struct Variable {
     data_type: DataType,
@@ -170,6 +170,35 @@ impl Compiler {
 
     }
 
+    fn handle_move_to(&mut self, name: &Name, value: Expression) -> Error {
+
+        if let Some(&idx) = self.name_table.get(name) {
+
+            let mem = Memory::Variable(idx);
+
+            self.clear(mem);
+
+            self.variables[idx].known_zeroed = false;
+
+            if let Expression::NumberLiteral(number) = value {
+
+                self.add_const(mem, number as i32);
+
+                if number == 0 {
+                    self.variables[idx].known_zeroed = true;
+                }
+
+                Ok(())
+
+            } else {
+                todo!()
+            }
+
+        } else {
+            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
+        }
+    }
+
     fn handle_set_to(&mut self, name: &Name, value: Expression) -> Error {
 
         if let Some(&idx) = self.name_table.get(name) {
@@ -290,6 +319,9 @@ impl Compiler {
             match statement {
                 Statement::Declaration(name, data_type) => 
                     self.handle_declaration(&name, data_type)?,
+
+                Statement::MoveTo(name, value) => 
+                    self.handle_move_to(&name, value)?,
 
                 Statement::SetTo(name, value) => 
                     self.handle_set_to(&name, value)?,
