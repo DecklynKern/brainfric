@@ -4,6 +4,9 @@ use crate::error::*;
 use crate::err;
 use crate::parse::*;
 
+type VarIdx = usize;
+type Error = Result<(), BrainFricError>;
+
 struct Variable {
     data_type: DataType,
     address: usize,
@@ -12,9 +15,8 @@ struct Variable {
 
 #[derive(Clone, Copy)]
 enum Memory {
-    Variable(usize),
-    Register(usize),
-    Address(usize)
+    Variable(VarIdx),
+    Absolute(usize)
 }
 
 pub struct Compiler {
@@ -22,12 +24,11 @@ pub struct Compiler {
     current_line_num: usize,
     compiled: String,
     variables: Vec<Variable>,
-    name_table: HashMap<Name, usize>,
+    name_table: HashMap<Name, VarIdx>,
     stack_pointer: usize,
+    next_register_offset: usize,
     data_head: usize
 }
-
-type Error = Result<(), BrainFricError>;
 
 impl Compiler {
 
@@ -42,20 +43,142 @@ impl Compiler {
             variables: Vec::new(),
             name_table: HashMap::new(),
             stack_pointer: 0,
+            next_register_offset: 0,
             data_head: 0
         }
+    }
+
+    pub fn get_expression_data_type(&self, expression: &Expression) -> Result<DataType, BrainFricError> {
+
+        Ok(match expression {
+            Expression::BoolLiteral(_) => DataType::Bool,
+            Expression::NumberLiteral(_) => DataType::Byte, // not correct :(
+            Expression::StringLiteral(_) => todo!(), // strings lol
+            Expression::Equals(expr1, expr2) |
+            Expression::GreaterThan(expr1, expr2) |
+            Expression::LessThan(expr1, expr2) |
+            Expression::And(expr1, expr2) |
+            Expression::Or(expr1, expr2) => {
+                self.assert_expression_data_type(expr1, DataType::Bool)?;
+                self.assert_expression_data_type(expr2, DataType::Bool)?;
+                DataType::Bool
+            }
+            Expression::Not(expr) => {
+                self.assert_expression_data_type(expr, DataType::Bool)?;
+                DataType::Bool
+            },
+            Expression::Add(expr1, expr2) |
+            Expression::Subtract(expr1, expr2) => {
+                // also not quite correct
+                self.assert_expression_data_type(expr1, DataType::Byte)?;
+                self.assert_expression_data_type(expr2, DataType::Byte)?;
+                DataType::Byte
+            }
+            Expression::Identifier(name) => {
+                self.variables[self.get_variable_idx(name)?].data_type.clone()
+            }
+        })
+    }
+
+    fn assert_expression_data_type(&self, expression: &Expression, data_type: DataType) -> Error {
+
+        let expression_type = self.get_expression_data_type(expression)?;
+
+        if expression_type != data_type {
+            err!(self.current_line_num, CompileError::IncorrectExpressionType(data_type, expression_type))
+        }
+
+        Ok(())
+
+    }
+
+    fn assert_variable_data_type(&self, name: &Name, data_type: DataType) -> Error {
+
+        let variable_type = &self.variables[self.get_variable_idx(name)?].data_type;
+
+        if *variable_type != data_type {
+            err!(self.current_line_num, CompileError::IncorrectExpressionType(data_type, variable_type.clone()))
+        }
+
+        Ok(())
+
+    }
+
+    fn assert_equal_type(&self, name: &Name, expression: &Expression) -> Result<&DataType, BrainFricError> {
+
+        let var_type = &self.variables[self.get_variable_idx(name)?].data_type;
+        let expr_type = self.get_expression_data_type(expression)?;
+
+        if *var_type != expr_type {
+            err!(self.current_line_num, CompileError::TypeMismatch(var_type.clone(), expr_type))
+        }
+
+        Ok(var_type)
+
     }
 
     fn push_code(&mut self, code: &str) {
         self.compiled.push_str(code);
     }
 
+    fn allocate_register(&mut self) -> Memory {
+        let mem = Memory::Absolute(self.stack_pointer + self.next_register_offset);
+        self.next_register_offset += 1;
+        mem
+    }
+
+    fn free_register(&mut self, register: Memory) -> Error {
+
+        if let Memory::Absolute(address) = register && address + 1 == self.stack_pointer + self.next_register_offset {
+            // it better have been cleared
+            self.next_register_offset -= 1;
+            Ok(())  
+
+        } else if let Memory::Variable(_) = register {
+            err!(self.current_line_num, InternalCompilerError::FreeVariableAsRegister);
+
+        } else {
+            err!(self.current_line_num, InternalCompilerError::BadRegisterFreeOrder);
+        }
+    }
+
+    fn get_variable_idx(&self, name: &Name) -> Result<VarIdx, BrainFricError> {
+
+        if let Some(idx) = self.name_table.get(name) {
+            Ok(*idx)
+
+        } else {
+            err!(self.current_line_num, CompileError::UnknownIdentifier(name.to_string()))
+        }
+    }
+
+    fn free_variable(&mut self, name: &Name) {
+        
+        let idx = self.name_table.remove(name).unwrap();
+        self.clear(Memory::Variable(idx));
+
+        let variable = self.variables.remove(idx);
+        
+        if variable.address + variable.data_type.get_size() == self.stack_pointer {
+            self.stack_pointer -= variable.data_type.get_size();
+        }
+    }
+
+    fn has_use(&self, name: &Name) -> bool {
+        self.statements.iter().any(|(_, statement)| statement.uses_variable(name))
+    }
+
+    fn is_last_use(&self, name: &Name) -> bool {
+        self.statements.iter().rposition(|(_, statement)|
+            statement.uses_variable(name)).is_some_and(|idx| idx == self.statements.len() - 1
+        )
+    }
+
     fn jump_to(&mut self, memory: Memory) {
 
         let address = match memory {
             Memory::Variable(idx) => self.variables[idx].address,
-            Memory::Register(offset) => self.stack_pointer + offset,
-            Memory::Address(address) => address
+            Memory::Absolute(address) => address
         };
     
         let diff = address as i32 - self.data_head as i32;
@@ -112,7 +235,7 @@ impl Compiler {
 
                 self.jump_to(memory.clone());
 
-                for i in 0..self.variables[idx].data_type.get_size() {
+                for _ in 0..self.variables[idx].data_type.get_size() {
                     self.push_code("[-]>");
                 }
 
@@ -121,33 +244,40 @@ impl Compiler {
                 self.data_head += self.variables[idx].data_type.get_size() - 1;
 
             }
-            Memory::Register(_) | Memory::Address(_) => {
+            Memory::Absolute(_) => {
                 self.jump_to(memory.clone());
                 self.push_code("[-]");
             }
         }
     }
 
-    fn free_variable(&mut self, name: &Name) {
-        
-        let idx = self.name_table.remove(name).unwrap();
-        self.clear(Memory::Variable(idx));
+    fn move_byte(&mut self, mems_to: &[Memory], mem_from: Memory) {
 
-        let variable = self.variables.remove(idx);
-        
-        if variable.address + variable.data_type.get_size() == self.stack_pointer {
-            self.stack_pointer -= variable.data_type.get_size();
+        self.jump_to(mem_from);
+        self.push_code("[-");
+
+        for mem_to in mems_to {
+            self.jump_to(*mem_to);
+            self.push_code("+");
         }
+
+        self.jump_to(mem_from);
+        self.push_code("]");
+
     }
 
-    fn has_use(&self, name: &Name) -> bool {
-        self.statements.iter().any(|(_, statement)| statement.uses_variable(name))
-    }
+    fn copy_byte(&mut self, mems_to: &[Memory], mem_from: Memory) -> Error {
+        
+        let reg = self.allocate_register();
+        let mut copy_back = mems_to.to_vec();
+        copy_back.push(mem_from);
 
-    fn is_last_use(&self, name: &Name) -> bool {
-        self.statements.iter().rposition(|(_, statement)|
-            statement.uses_variable(name)).is_some_and(|idx| idx == self.statements.len() - 1
-        )
+        self.move_byte(&[reg], mem_from);
+        self.move_byte(copy_back.as_slice(), reg);
+
+        self.free_register(reg)?;
+        Ok(())
+
     }
 
     fn handle_declaration(&mut self, name: &Name, data_type: DataType) -> Error {
@@ -170,102 +300,68 @@ impl Compiler {
 
     }
 
-    fn handle_move_to(&mut self, name: &Name, value: Expression) -> Error {
-
-        if let Some(&idx) = self.name_table.get(name) {
-
-            let mem = Memory::Variable(idx);
-
-            self.clear(mem);
-
-            self.variables[idx].known_zeroed = false;
-
-            if let Expression::NumberLiteral(number) = value {
-
-                self.add_const(mem, number as i32);
-
-                if number == 0 {
-                    self.variables[idx].known_zeroed = true;
-                }
-
-                Ok(())
-
-            } else {
-                todo!()
-            }
-
-        } else {
-            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
-        }
-    }
-
     fn handle_set_to(&mut self, name: &Name, value: Expression) -> Error {
 
-        if let Some(&idx) = self.name_table.get(name) {
+        self.assert_equal_type(name, &value)?;
 
-            let mem = Memory::Variable(idx);
+        let idx = self.get_variable_idx(name)?;
+        let mem = Memory::Variable(idx);
 
-            self.clear(mem);
+        self.clear(mem);
 
-            self.variables[idx].known_zeroed = false;
+        self.variables[idx].known_zeroed = false;
 
-            if let Expression::NumberLiteral(number) = value {
+        if let Expression::NumberLiteral(number) = value {
 
-                self.add_const(mem, number as i32);
+            self.add_const(mem, number as i32);
 
-                if number == 0 {
-                    self.variables[idx].known_zeroed = true;
-                }
-
-                Ok(())
-
-            } else {
-                todo!()
+            if number == 0 {
+                self.variables[idx].known_zeroed = true;
             }
 
+            Ok(())
+
+        } else if let Expression::Identifier(name_from) = value {
+
+            let idx_from = self.get_variable_idx(&name_from)?;
+            self.copy_byte(&[mem], Memory::Variable(self.variables[idx_from].address))?;
+
+            Ok(())
+
         } else {
-            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
+            todo!()
         }
     }
 
     fn handle_inc(&mut self, name: &Name) -> Error {
 
-        if let Some(&idx) = self.name_table.get(name) {
-            self.add_const(Memory::Variable(idx), 1);
-            Ok(())
+        self.assert_variable_data_type(name, DataType::Byte)?;
 
-        } else {
-            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
-        }
+        self.add_const(Memory::Variable(self.get_variable_idx(name)?), 1);
+        Ok(())
+        
     }
 
     fn handle_dec(&mut self, name: &Name) -> Error {
 
-        if let Some(&idx) = self.name_table.get(name) {
-            self.add_const(Memory::Variable(idx), -1);
-            Ok(())
+        self.assert_variable_data_type(name, DataType::Byte)?;
 
-        } else {
-            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
-        }
+        self.sub_const(Memory::Variable(self.get_variable_idx(name)?), 1);
+        Ok(())
+
     }
 
     fn handle_write(&mut self, expression: Expression) -> Error {
 
         if let Expression::Identifier(name) = expression {
-    
-            if let Some(&idx) = self.name_table.get(&name) {
-                self.jump_to(Memory::Variable(idx));
-                self.push_code(".");                
 
-            } else {
-                todo!()
-            }
+            self.jump_to(Memory::Variable(self.get_variable_idx(&name)?));
+            self.push_code(".");
             
         } else if let Expression::StringLiteral(val) = expression {
 
-            let mem = Memory::Register(0);
-            self.jump_to(mem);
+            let reg = self.allocate_register();
+            self.jump_to(reg);
 
             let mut last_char_val = 0;
 
@@ -275,19 +371,21 @@ impl Compiler {
             
                 if char_val < 256 {
 
-                    self.add_const(mem, char_val - last_char_val);
+                    self.add_const(reg, char_val - last_char_val);
                     self.push_code(".");
 
                     last_char_val = char_val;
 
                 } else {
-                    todo!()
+                    err!(self.current_line_num, CompileError::NumberLiteralTooLarge(char as u32));
                 }
             }
 
             if !val.is_empty() {
-                self.clear(mem);
+                self.clear(reg);
             }
+
+            self.free_register(reg)?;
         
         } else {
             todo!()
@@ -299,15 +397,13 @@ impl Compiler {
 
     fn handle_read(&mut self, name: &Name) -> Error {
 
-        if let Some(&idx) = self.name_table.get(name) {
-            self.jump_to(Memory::Variable(idx));
-            self.push_code(",");
+        self.assert_variable_data_type(name, DataType::Byte)?;
 
-            Ok(())
-            
-        } else {
-            err!(self.current_line_num, CompilerError::UnknownIdentifier(name.clone()));
-        }
+        self.jump_to(Memory::Variable(self.get_variable_idx(name)?));
+        self.push_code(",");
+
+        Ok(())
+
     }
 
     pub fn compile(&mut self) -> Result<String, BrainFricError> {
@@ -315,13 +411,14 @@ impl Compiler {
         while let Some((line_num, statement)) = self.statements.pop() {
 
             self.current_line_num = line_num;
+
+            if self.next_register_offset != 0 {
+                err!(self.current_line_num, InternalCompilerError::UnfreedRegister);
+            }
     
             match statement {
                 Statement::Declaration(name, data_type) => 
                     self.handle_declaration(&name, data_type)?,
-
-                Statement::MoveTo(name, value) => 
-                    self.handle_move_to(&name, value)?,
 
                 Statement::SetTo(name, value) => 
                     self.handle_set_to(&name, value)?,

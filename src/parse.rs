@@ -34,13 +34,16 @@ pub enum Expression {
     Equals(Box<Expression>, Box<Expression>),
     LessThan(Box<Expression>, Box<Expression>),
     GreaterThan(Box<Expression>, Box<Expression>),
+    Not(Box<Expression>),
+    And(Box<Expression>, Box<Expression>),
+    Or(Box<Expression>, Box<Expression>),
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>)
 }
 
 impl Expression {
 
-    fn try_parse(tokens: &[Token]) -> Option<Expression> {
+    fn try_parse(tokens: &[Token]) -> Option<Self> {
 
         if tokens.is_empty() {
             return None;
@@ -79,7 +82,6 @@ impl Expression {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
     Declaration(Name, DataType),
-    MoveTo(Name, Expression),
     SetTo(Name, Expression),
     Inc(Name),
     Dec(Name),
@@ -147,15 +149,7 @@ impl Parser {
                         todo!();
     
                     } else {
-                        err!(self.current_line_num, ParserError::InvalidStatement);
-                    }
-                }
-                Token::Identifier(name) if Token::Operator(Operator::MoveTo) == line[1] => {
-                    if let Some(expression) = Expression::try_parse(&line[2..]) {
-                        Statement::SetTo(name.clone(), expression)
-                    
-                    } else {
-                        err!(self.current_line_num, ParserError::InvalidExpression);
+                        err!(self.current_line_num, ParseError::InvalidStatement);
                     }
                 }
                 Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
@@ -163,7 +157,7 @@ impl Parser {
                         Statement::SetTo(name.clone(), expression)
                     
                     } else {
-                        err!(self.current_line_num, ParserError::InvalidExpression);
+                        err!(self.current_line_num, ParseError::InvalidExpression);
                     }
                 }
                 Token::Keyword(Keyword::Inc) => {
@@ -171,7 +165,7 @@ impl Parser {
                         Statement::Inc(name.clone())
                     
                     } else {
-                        err!(self.current_line_num, ParserError::ExpectedIdentifier);
+                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }
                 Token::Keyword(Keyword::Dec) => {
@@ -179,7 +173,7 @@ impl Parser {
                         Statement::Dec(name.clone())
                     
                     } else {
-                        err!(self.current_line_num, ParserError::ExpectedIdentifier);
+                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }
                 Token::Keyword(Keyword::Write) => {
@@ -187,7 +181,7 @@ impl Parser {
                         Statement::Write(expression)
                     
                     } else {
-                        err!(self.current_line_num, ParserError::InvalidExpression);
+                        err!(self.current_line_num, ParseError::InvalidExpression);
                     }
                 }
                 Token::Keyword(Keyword::Read) => {
@@ -195,10 +189,10 @@ impl Parser {
                         Statement::Read(name.clone())
                     
                     } else {
-                        err!(self.current_line_num, ParserError::ExpectedIdentifier);
+                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }
-                _ => err!(self.current_line_num, ParserError::InvalidStatement)
+                _ => err!(self.current_line_num, ParseError::InvalidStatement)
             }));
 
             self.current_line_num += 1;

@@ -89,7 +89,6 @@ impl Separator {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operator {
 
-    MoveTo,
     SetTo,
 
     Equals,
@@ -105,7 +104,6 @@ impl Operator {
     fn try_parse(token: &String) -> Option<Token> {
 
         Some(Token::Operator(match token.as_str() {
-            "<-" => Self::MoveTo,
             "<=" => Self::SetTo,
             "=" => Self::Equals,
             "<" => Self::LessThan,
@@ -123,8 +121,7 @@ pub enum Token {
     Keyword(Keyword),
     Literal(Literal),
     Separator(Separator),
-    Operator(Operator),
-    Comment(String)
+    Operator(Operator)
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -154,7 +151,10 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
         let token_over = (chr.is_whitespace() && current_token_initial_char != TokenInitialChar::Quote) || chars.is_empty();
         let mut token_ended = true;
 
-        if current_token_initial_char == TokenInitialChar::Alphabetic && 
+        if current_token_initial_char != TokenInitialChar::Quote && current_token == "//" {
+            break; // comment
+            
+        } else if current_token_initial_char == TokenInitialChar::Alphabetic && 
             (!(chr.is_alphanumeric() || chr == '_') || token_over) {
 
             if let Some(token) = Keyword::try_parse(&current_token) {
@@ -174,7 +174,7 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
                 tokens.push(token);
 
             } else {
-                err!(line_num, LexerError::InvalidToken(current_token.clone()));
+                err!(line_num, LexError::InvalidToken(current_token.clone()));
             }
             
         } else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {

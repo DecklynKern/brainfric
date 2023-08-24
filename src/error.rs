@@ -1,46 +1,98 @@
+use crate::parse::DataType;
+
 pub trait ErrorDesc {
     fn get_description(&self) -> String;
 }
 
-pub enum LexerError {
+pub enum LexError {
     InvalidToken(String)
 }
 
-impl ErrorDesc for LexerError {
+impl ErrorDesc for LexError {
 
     fn get_description(&self) -> String {
-        format!("Lexer Error: {}", match self {
+        format!("Lex Error: {}", match self {
             Self::InvalidToken(token) => format!("Invalid token: \"{token}\"")
         })
     }
 }
 
-pub enum ParserError {
+pub enum ParseError {
     InvalidStatement,
     InvalidExpression,
-    ExpectedIdentifier
+    ExpectedIdentifier,
+    ExpectedNumberLiteral
+
 }
 
-impl ErrorDesc for ParserError {
+impl ErrorDesc for ParseError {
 
     fn get_description(&self) -> String {
-        format!("Parser Error: {}", match self {
+        format!("Parse Error: {}", match self {
             Self::InvalidStatement => format!("Invalid statement"),
             Self::InvalidExpression => format!("Invalid expression"),
-            Self::ExpectedIdentifier => format!("Expected identifier")
+            Self::ExpectedIdentifier => format!("Expected identifier"),
+            Self::ExpectedNumberLiteral => format!("Expected number literal")
         })
     }
 }
 
-pub enum CompilerError {
-    UnknownIdentifier(String)
+pub enum IRError {
+    UnknownIdentifier(String),
+    TypeMismatch(DataType, DataType)
 }
 
-impl ErrorDesc for CompilerError {
+impl ErrorDesc for IRError {
+
+    fn get_description(&self) -> String {
+        format!("IR Generation Error: {}", match self {
+            Self::UnknownIdentifier(identifier) =>
+                format!("Unknown identifier \"{identifier}\""),
+            Self::TypeMismatch(expected_type, got_type) =>  
+                format!("Type mismatch. Expected {:?}, got {:?}", expected_type, got_type)
+        })
+    }
+}
+
+pub enum CompileError {
+    UnknownIdentifier(String),
+    NumberLiteralTooLarge(u32),
+    IncorrectExpressionType(DataType, DataType),
+    IncorrectVariableType(DataType, DataType),
+    TypeMismatch(DataType, DataType)
+}
+
+impl ErrorDesc for CompileError {
+
+    fn get_description(&self) -> String {
+        format!("Compile Error: {}", match self {
+            Self::UnknownIdentifier(identifier) =>
+                format!("Unknown identifier \"{identifier}\""),
+            Self::NumberLiteralTooLarge(literal) =>
+                format!("Number literal \"{}\" too large", literal),
+            Self::IncorrectExpressionType(expected_type, got_type) =>
+                format!("Incorrect expression type. Expected {:?} got {:?}", expected_type, got_type),
+            Self::IncorrectVariableType(expected_type, got_type) =>
+                format!("Incorrect variable type. Expected {:?} got {:?}", expected_type, got_type),
+            Self::TypeMismatch(var_type, expr_type) =>  
+                format!("Type mismatch {:?} {:?}", var_type, expr_type)
+        })
+    }
+}
+
+pub enum InternalCompilerError {
+    UnfreedRegister,
+    FreeVariableAsRegister,
+    BadRegisterFreeOrder
+}
+
+impl ErrorDesc for InternalCompilerError {
 
     fn get_description(&self) -> String {
         format!("Compiler Error: {}", match self {
-            Self::UnknownIdentifier(identifier) => format!("Unknown identifier: \"{identifier}\"")
+            Self::UnfreedRegister => "Unfreed register by the time of current instruction",
+            Self::FreeVariableAsRegister => "Attempted to free variable as register",
+            Self::BadRegisterFreeOrder => "Register attempted to be freed in incorrect order"
         })
     }
 }

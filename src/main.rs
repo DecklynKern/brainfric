@@ -9,6 +9,7 @@ use error::BrainFricError;
 mod error;
 mod lex;
 mod parse;
+mod ir;
 mod compile;
 
 fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
