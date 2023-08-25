@@ -104,7 +104,7 @@ impl Operator {
     fn try_parse(token: &String) -> Option<Token> {
 
         Some(Token::Operator(match token.as_str() {
-            "<=" => Self::SetTo,
+            "<-" => Self::SetTo,
             "=" => Self::Equals,
             "<" => Self::LessThan,
             ">" => Self::GreaterThan,
@@ -153,40 +153,40 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
 
         if current_token_initial_char != TokenInitialChar::Quote && current_token == "//" {
             break; // comment
-            
-        } else if current_token_initial_char == TokenInitialChar::Alphabetic && 
+        }
+        else if current_token_initial_char == TokenInitialChar::Alphabetic && 
             (!(chr.is_alphanumeric() || chr == '_') || token_over) {
 
             if let Some(token) = Keyword::try_parse(&current_token) {
                 tokens.push(token);
-                
-            } else if let Some(token) = Literal::try_parse_bool(&current_token) {
+            }
+            else if let Some(token) = Literal::try_parse_bool(&current_token) {
                 tokens.push(token);
-                
-            } else {
+            }
+            else {
                 tokens.push(Token::Identifier(current_token.clone()));
             }
-
-        } else if current_token_initial_char == TokenInitialChar::Numeric && 
+        }
+        else if current_token_initial_char == TokenInitialChar::Numeric && 
             (!chr.is_numeric() || token_over) {
 
             if let Some(token) = Literal::try_parse_number(&current_token) {
                 tokens.push(token);
-
-            } else {
+            }
+            else {
                 err!(line_num, LexError::InvalidToken(current_token.clone()));
             }
-            
-        } else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
+        }
+        else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
             tokens.push(Token::Literal(Literal::String(current_token[1..].to_string())));
             current_token.clear();
             current_token_initial_char = TokenInitialChar::None;
             continue;
-
-        } else if let Some(token) = Separator::try_parse(&current_token) {
+        }
+        else if let Some(token) = Separator::try_parse(&current_token) {
             tokens.push(token);
-
-        } else if let Some(token) = Operator::try_parse(&current_token) {
+        }
+        else if let Some(token) = Operator::try_parse(&current_token) {
 
             let mut try_add = current_token.clone();
             try_add.push(chr);
@@ -194,12 +194,12 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
             if let Some(_) = Operator::try_parse(&try_add) {
                 current_token.push(chr);
                 continue;
-                
-            } else {
+            }
+            else {
                 tokens.push(token);
             }
-
-        } else if !token_over {
+        }
+        else if !token_over {
             token_ended = false;
         }
 
@@ -209,17 +209,17 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
         
             current_token_initial_char = if chr.is_alphabetic() {
                 TokenInitialChar::Alphabetic
-
-            } else if chr.is_numeric() {
+            }
+            else if chr.is_numeric() {
                 TokenInitialChar::Numeric
-
-            } else if chr == '"' {
+            }
+            else if chr == '"' {
                 TokenInitialChar::Quote
-
-            } else if chr == ' ' {
+            }
+            else if chr == ' ' {
                 TokenInitialChar::None
-
-            } else {
+            }
+            else {
                 TokenInitialChar::Other
             };
         }

@@ -52,14 +52,14 @@ impl Expression {
         if tokens.len() == 1 {
             if let Token::Identifier(name) = &tokens[0] {
                 return Some(Self::Identifier(name.clone()));
-            
-            } else if let Token::Literal(Literal::Bool(val)) = tokens[0] {
+            }
+            else if let Token::Literal(Literal::Bool(val)) = tokens[0] {
                 return Some(Self::BoolLiteral(val));
-
-            } else if let Token::Literal(Literal::Number(val)) = tokens[0] {
+            }
+            else if let Token::Literal(Literal::Number(val)) = tokens[0] {
                 return Some(Self::NumberLiteral(val));
-
-            } else if let Token::Literal(Literal::String(val)) = &tokens[0] {
+            }
+            else if let Token::Literal(Literal::String(val)) = &tokens[0] {
                 return Some(Self::StringLiteral(val.clone()));
             }
         }
@@ -113,7 +113,7 @@ impl Parser {
 
         Self {
             tokens,
-            current_line_num: 0
+            current_line_num: 1
         }
     }
 
@@ -137,58 +137,58 @@ impl Parser {
                 Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] && keyword.is_type() => {
     
                     if *keyword == Keyword::Bool {
-                        Statement::Declaration(name.clone(), DataType::Bool)
-                        
-                    } else if *keyword == Keyword::Byte {
+                        Statement::Declaration(name.clone(), DataType::Bool) 
+                    }
+                    else if *keyword == Keyword::Byte {
                         Statement::Declaration(name.clone(), DataType::Byte)
-                    
-                    } else if *keyword == Keyword::Short {
+                    }
+                    else if *keyword == Keyword::Short {
                         Statement::Declaration(name.clone(), DataType::Short)
-    
-                    } else if *keyword == Keyword::Array {
+                    }
+                    else if *keyword == Keyword::Array {
                         todo!();
-    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::InvalidStatement);
                     }
                 }
                 Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
                     if let Some(expression) = Expression::try_parse(&line[2..]) {
                         Statement::SetTo(name.clone(), expression)
-                    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::InvalidExpression);
                     }
                 }
                 Token::Keyword(Keyword::Inc) => {
                     if let Token::Identifier(name) = &line[1] {
                         Statement::Inc(name.clone())
-                    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }
                 Token::Keyword(Keyword::Dec) => {
                     if let Token::Identifier(name) = &line[1] {
                         Statement::Dec(name.clone())
-                    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }
                 Token::Keyword(Keyword::Write) => {
                     if let Some(expression) = Expression::try_parse(&line[1..]) {
                         Statement::Write(expression)
-                    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::InvalidExpression);
                     }
                 }
                 Token::Keyword(Keyword::Read) => {
                     if let Token::Identifier(name) = &line[1] {
                         Statement::Read(name.clone())
-                    
-                    } else {
+                    }
+                    else {
                         err!(self.current_line_num, ParseError::ExpectedIdentifier);
                     }
                 }

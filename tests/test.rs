@@ -13,7 +13,7 @@ fn basic_lexer_check() {
             ],
             vec![
                 lex::Token::Identifier("a".to_string()),
-                lex::Token::Operator(lex::Operator::MoveTo),
+                lex::Token::Operator(lex::Operator::SetTo),
                 lex::Token::Literal(lex::Literal::Number(240))
             ]
         ]
@@ -45,21 +45,4 @@ fn basic_parser_check() {
             ))
         ]
     )
-}
-
-#[test]
-fn basic_compiler_check() {
-
-    let mut compiler = compile::Compiler::new(vec![
-        (0, parse::Statement::Declaration("a".to_string(), parse::DataType::Byte)),
-        (1, parse::Statement::SetTo(
-            "a".to_string(),
-            parse::Expression::NumberLiteral(240)
-        ))
-    ]);
-
-    assert_eq!(
-        compiler.compile().unwrap_or_else(|_| panic!()),
-        "----------------".to_string()
-    );
 }

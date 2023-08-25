@@ -54,49 +54,6 @@ impl ErrorDesc for IRError {
     }
 }
 
-pub enum CompileError {
-    UnknownIdentifier(String),
-    NumberLiteralTooLarge(u32),
-    IncorrectExpressionType(DataType, DataType),
-    IncorrectVariableType(DataType, DataType),
-    TypeMismatch(DataType, DataType)
-}
-
-impl ErrorDesc for CompileError {
-
-    fn get_description(&self) -> String {
-        format!("Compile Error: {}", match self {
-            Self::UnknownIdentifier(identifier) =>
-                format!("Unknown identifier \"{identifier}\""),
-            Self::NumberLiteralTooLarge(literal) =>
-                format!("Number literal \"{}\" too large", literal),
-            Self::IncorrectExpressionType(expected_type, got_type) =>
-                format!("Incorrect expression type. Expected {:?} got {:?}", expected_type, got_type),
-            Self::IncorrectVariableType(expected_type, got_type) =>
-                format!("Incorrect variable type. Expected {:?} got {:?}", expected_type, got_type),
-            Self::TypeMismatch(var_type, expr_type) =>  
-                format!("Type mismatch {:?} {:?}", var_type, expr_type)
-        })
-    }
-}
-
-pub enum InternalCompilerError {
-    UnfreedRegister,
-    FreeVariableAsRegister,
-    BadRegisterFreeOrder
-}
-
-impl ErrorDesc for InternalCompilerError {
-
-    fn get_description(&self) -> String {
-        format!("Compiler Error: {}", match self {
-            Self::UnfreedRegister => "Unfreed register by the time of current instruction",
-            Self::FreeVariableAsRegister => "Attempted to free variable as register",
-            Self::BadRegisterFreeOrder => "Register attempted to be freed in incorrect order"
-        })
-    }
-}
-
 pub struct BrainFricError {
     pub line: usize,
     pub error: Box<dyn ErrorDesc>
@@ -105,7 +62,14 @@ pub struct BrainFricError {
 impl BrainFricError {
     
     pub fn print(&self) {
-        println!("Error on line {}.", self.line);
+
+        if self.line != 0 {
+            println!("Error on line {}.", self.line);
+        }
+        else {
+            println!("Interal compiler error.")
+        }
+
         println!("{}", self.error.get_description());
     }
 }
@@ -114,7 +78,7 @@ impl BrainFricError {
 macro_rules! err {
     ($line_num:expr, $error:expr) => {
         return Err(BrainFricError {
-            line: $line_num + 1,
+            line: $line_num,
             error: Box::new($error)
         })
     }

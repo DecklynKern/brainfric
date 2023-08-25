@@ -10,7 +10,8 @@ mod error;
 mod lex;
 mod parse;
 mod ir;
-mod compile;
+mod optimize;
+mod lower;
 
 fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
@@ -31,13 +32,23 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     }
     println!();
 
-    let mut compiler = compile::Compiler::new(statements);
-    let compiled = compiler.compile()?;
+    let mut ir_generator = ir::IRGenerator::new();
+    let mut ir = ir_generator.generate_ir(statements)?;
 
-    println!("=== COMPILER PASS ===");
-    println!("{compiled}\n");
+    println!("=== IR PASS ===");
+    for ir_statement in &ir {
+        println!("{ir_statement:?}");
+    }
 
-    Ok(compiled)
+    optimize::optimize(&mut ir);
+
+    println!("\n=== OPTIMIZER PASS ===");
+    for ir_statement in &ir {
+        println!("{ir_statement:?}");
+    }
+
+    let mut lowerer = lower::Lowerer::new();
+    Ok(lowerer.lower(ir))
 
 }
 

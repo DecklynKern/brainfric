@@ -4,5 +4,5 @@ byte c
 bool d
 a <- 10
 b <- 15
-c <= a
+c <- a
 d <- true
