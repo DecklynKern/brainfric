@@ -123,12 +123,7 @@ impl Parser {
 
         while let Some(line) = self.tokens.pop() {
     
-            if line.is_empty() {
-                self.current_line_num += 1;
-                continue;
-            }
-    
-            if line.len() == 1 {
+            if line.len() < 2 {
                 self.current_line_num += 1;
                 continue;
             }
