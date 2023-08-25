@@ -40,11 +40,16 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
         println!("{ir_statement:?}");
     }
 
-    optimize::optimize(&mut ir);
+    let pass = 0;
+    
+    while optimize::optimize(&mut ir) {
 
-    println!("\n=== OPTIMIZER PASS ===");
-    for ir_statement in &ir {
-        println!("{ir_statement:?}");
+        pass += 1;
+
+        println!("\n=== OPTIMIZER PASS {pass} ===");
+        for ir_statement in &ir {
+            println!("{ir_statement:?}");
+        }
     }
 
     let mut lowerer = lower::Lowerer::new();
