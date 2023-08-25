@@ -38,8 +38,8 @@ fn basic_parser_check() {
     assert_eq!(
         parser.parse().unwrap_or_else(|_| panic!()),
         vec![
-            (0, parse::Statement::Declaration("a".to_string(), parse::DataType::Byte)),
-            (1, parse::Statement::SetTo(
+            (1, parse::Statement::Declaration("a".to_string(), parse::DataType::Byte)),
+            (2, parse::Statement::SetTo(
                 "a".to_string(),
                 parse::Expression::NumberLiteral(240)
             ))
