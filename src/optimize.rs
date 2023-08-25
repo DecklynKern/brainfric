@@ -8,11 +8,12 @@ enum OptimizeAction {
     None
 }
 
-pub fn optimize(ir: &mut Vec<IRStatement>) {
+pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
 
     let mut statement_idx = 0;
-
     let mut known_zero = HashMap::new();
+
+    let mut did_action = false;
 
     while statement_idx < ir.len() {
 
@@ -47,12 +48,12 @@ pub fn optimize(ir: &mut Vec<IRStatement>) {
             }
             IRStatement::MoveCell(to, from) => {
 
-                if known_zero[from] && to.is_empty() {
+                if known_zero[from] {
                     action = OptimizeAction::DeleteStatement(statement_idx);
                 }
                 else {
 
-                    known_zero.insert(*from, false);
+                    known_zero.insert(*from, true);
                 
                     for reg in to {
                         known_zero.insert(*reg, false);
@@ -68,6 +69,8 @@ pub fn optimize(ir: &mut Vec<IRStatement>) {
         match action {
             OptimizeAction::DeleteReg(reg) => {
 
+                did_action = true;
+                
                 let mut check_idx = 0;
 
                 while check_idx < ir.len() {
@@ -81,9 +84,13 @@ pub fn optimize(ir: &mut Vec<IRStatement>) {
                 }
             }
             OptimizeAction::DeleteStatement(idx) => {
+                did_action = true;
                 ir.remove(idx);
             },
             OptimizeAction::None => statement_idx += 1
         }
     }
+
+    did_action
+    
 }
