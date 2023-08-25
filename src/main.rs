@@ -40,7 +40,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
         println!("{ir_statement:?}");
     }
 
-    let pass = 0;
+    let mut pass = 0;
     
     while optimize::optimize(&mut ir) {
 
