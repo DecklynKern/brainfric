@@ -21,8 +21,8 @@ pub enum ParseError {
     InvalidStatement,
     InvalidExpression,
     ExpectedIdentifier,
-    ExpectedNumberLiteral
-
+    ExpectedNumberLiteral,
+    ExpectedEnd
 }
 
 impl ErrorDesc for ParseError {
@@ -32,7 +32,8 @@ impl ErrorDesc for ParseError {
             Self::InvalidStatement => format!("Invalid statement"),
             Self::InvalidExpression => format!("Invalid expression"),
             Self::ExpectedIdentifier => format!("Expected identifier"),
-            Self::ExpectedNumberLiteral => format!("Expected number literal")
+            Self::ExpectedNumberLiteral => format!("Expected number literal"),
+            Self::ExpectedEnd => format!("Expected end statement to block")
         })
     }
 }

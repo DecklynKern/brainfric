@@ -38,7 +38,8 @@ pub enum Expression {
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
     Add(Box<Expression>, Box<Expression>),
-    Subtract(Box<Expression>, Box<Expression>)
+    Subtract(Box<Expression>, Box<Expression>),
+    AsBool(Box<Expression>)
 }
 
 impl Expression {
@@ -46,26 +47,48 @@ impl Expression {
     fn try_parse(tokens: &[Token]) -> Option<Self> {
 
         if tokens.is_empty() {
-            return None;
+            None
         }
-
-        if tokens.len() == 1 {
+        else if tokens.len() == 1 {
             if let Token::Identifier(name) = &tokens[0] {
-                return Some(Self::Identifier(name.clone()));
+                Some(Self::Identifier(name.clone()))
             }
             else if let Token::Literal(Literal::Bool(val)) = tokens[0] {
-                return Some(Self::BoolLiteral(val));
+                Some(Self::BoolLiteral(val))
             }
             else if let Token::Literal(Literal::Number(val)) = tokens[0] {
-                return Some(Self::NumberLiteral(val));
+                Some(Self::NumberLiteral(val))
             }
             else if let Token::Literal(Literal::String(val)) = &tokens[0] {
-                return Some(Self::StringLiteral(val.clone()));
+                Some(Self::StringLiteral(val.clone()))
+
+            } else {
+                None
             }
         }
-
-        None
-
+        else if tokens[0] == Token::Operator(Operator::AsBool) {
+            if let Some(expr) = Expression::try_parse(&tokens[1..]) {
+                Some(Self::AsBool(Box::new(expr)))
+            }
+            else {
+                None
+            }
+        } else if tokens[1] == Token::Operator(Operator::Plus) {
+            if let Some(expr1) = Expression::try_parse(&tokens[0..1]) {
+                if let Some(expr2) = Expression::try_parse(&tokens[2..]) {
+                    Some(Self::Add(Box::new(expr1), Box::new(expr2)))
+                }
+                else {
+                    None
+                }
+            }
+            else {
+                None
+            }
+        }
+        else {
+            None
+        }
     }
 
     fn uses_variable(&self, variable: &Name) -> bool {
@@ -86,7 +109,8 @@ pub enum Statement {
     Inc(Name),
     Dec(Name),
     Write(Expression),
-    Read(Name)
+    Read(Name),
+    While(Expression, Vec<(usize, Statement)>)
 }
 
 impl Statement {
@@ -100,101 +124,118 @@ impl Statement {
     }
 }
 
-pub struct Parser {
-    tokens: Vec<Vec<Token>>,
-    current_line_num: usize
-}
+pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<(usize, Statement)>, BrainFricError> {
 
-impl Parser {
+    tokens.reverse();
 
-    pub fn new(mut tokens: Vec<Vec<Token>>) -> Self {
+    let mut statements = Vec::new();
 
-        tokens.reverse();
+    while let Some(line) = tokens.pop() {
 
-        Self {
-            tokens,
-            current_line_num: 1
+        current_line_num += 1;
+
+        if line.len() < 2 {
+            continue;
         }
-    }
 
-    pub fn parse(&mut self) -> Result<Vec<(usize, Statement)>, BrainFricError> {
+        statements.push((current_line_num, match &line[0] {
+            Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] && keyword.is_type() => {
 
-        let mut statements = Vec::new();
-
-        while let Some(line) = self.tokens.pop() {
-    
-            if line.len() < 2 {
-                self.current_line_num += 1;
-                continue;
+                if *keyword == Keyword::Bool {
+                    Statement::Declaration(name.clone(), DataType::Bool) 
+                }
+                else if *keyword == Keyword::Byte {
+                    Statement::Declaration(name.clone(), DataType::Byte)
+                }
+                else if *keyword == Keyword::Short {
+                    Statement::Declaration(name.clone(), DataType::Short)
+                }
+                else if *keyword == Keyword::Array {
+                    todo!();
+                }
+                else {
+                    err!(current_line_num, ParseError::InvalidStatement);
+                }
             }
-    
-            statements.push((self.current_line_num, match &line[0] {
-                Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] && keyword.is_type() => {
-    
-                    if *keyword == Keyword::Bool {
-                        Statement::Declaration(name.clone(), DataType::Bool) 
-                    }
-                    else if *keyword == Keyword::Byte {
-                        Statement::Declaration(name.clone(), DataType::Byte)
-                    }
-                    else if *keyword == Keyword::Short {
-                        Statement::Declaration(name.clone(), DataType::Short)
-                    }
-                    else if *keyword == Keyword::Array {
-                        todo!();
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::InvalidStatement);
-                    }
+            Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
+                if let Some(expression) = Expression::try_parse(&line[2..]) {
+                    Statement::SetTo(name.clone(), expression)
                 }
-                Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
-                    if let Some(expression) = Expression::try_parse(&line[2..]) {
-                        Statement::SetTo(name.clone(), expression)
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::InvalidExpression);
-                    }
+                else {
+                    err!(current_line_num, ParseError::InvalidExpression);
                 }
-                Token::Keyword(Keyword::Inc) => {
-                    if let Token::Identifier(name) = &line[1] {
-                        Statement::Inc(name.clone())
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
-                    }
+            }
+            Token::Keyword(Keyword::Inc) => {
+                if let Token::Identifier(name) = &line[1] {
+                    Statement::Inc(name.clone())
                 }
-                Token::Keyword(Keyword::Dec) => {
-                    if let Token::Identifier(name) = &line[1] {
-                        Statement::Dec(name.clone())
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
-                    }
+                else {
+                    err!(current_line_num, ParseError::ExpectedIdentifier);
                 }
-                Token::Keyword(Keyword::Write) => {
-                    if let Some(expression) = Expression::try_parse(&line[1..]) {
-                        Statement::Write(expression)
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::InvalidExpression);
-                    }
+            }
+            Token::Keyword(Keyword::Dec) => {
+                if let Token::Identifier(name) = &line[1] {
+                    Statement::Dec(name.clone())
                 }
-                Token::Keyword(Keyword::Read) => {
-                    if let Token::Identifier(name) = &line[1] {
-                        Statement::Read(name.clone())
-                    }
-                    else {
-                        err!(self.current_line_num, ParseError::ExpectedIdentifier);
-                    }
+                else {
+                    err!(current_line_num, ParseError::ExpectedIdentifier);
                 }
-                _ => err!(self.current_line_num, ParseError::InvalidStatement)
-            }));
+            }
+            Token::Keyword(Keyword::Write) => {
+                if let Some(expression) = Expression::try_parse(&line[1..]) {
+                    Statement::Write(expression)
+                }
+                else {
+                    err!(current_line_num, ParseError::InvalidExpression);
+                }
+            }
+            Token::Keyword(Keyword::Read) => {
+                if let Token::Identifier(name) = &line[1] {
+                    Statement::Read(name.clone())
+                }
+                else {
+                    err!(current_line_num, ParseError::ExpectedIdentifier);
+                }
+            }
+            Token::Keyword(Keyword::While) => {
+                
+                if let Some(expression) = Expression::try_parse(&line[1..]) {
 
-            self.current_line_num += 1;
+                    let mut loop_lines = Vec::new();
+                    let mut loop_depth = 1;
 
-        }
+                    while loop_depth > 0 {
 
-        Ok(statements)
+                        if let Some(line) = tokens.pop() {
 
+                            if line[0] == Token::Keyword(Keyword::While) {
+                                loop_depth += 1;
+                            }
+                            else if line[0] == Token::Keyword(Keyword::End) && line.len() == 1 {
+                                loop_depth -= 1;
+                            }
+
+                            loop_lines.push(line);
+
+                        }
+                        else {
+                            err!(current_line_num, ParseError::ExpectedEnd)
+                        }
+                    }
+
+                    loop_lines.pop();
+                    Statement::While(expression, parse(loop_lines, current_line_num)?)
+
+                }
+                else {
+                    err!(current_line_num, ParseError::InvalidExpression);
+                }
+
+            }
+            _ => err!(current_line_num, ParseError::InvalidStatement)
+        }));
     }
+
+    Ok(statements)
+
 }

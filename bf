@@ -1,8 +1,13 @@
 byte a
 byte b
 byte c
-bool d
-a <- 10
-b <- 15
-c <- a
-d <- true
+
+a <- 0
+b <- 1
+
+while ?b
+  c <- a + b
+  a <- b 
+  b <- c
+  write b
+end

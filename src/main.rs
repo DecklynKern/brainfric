@@ -23,8 +23,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     }
     println!();
 
-    let mut parser = parse::Parser::new(tokenized);
-    let statements = parser.parse()?;
+    let statements = parse::parse(tokenized, 0)?;
 
     println!("=== PARSER PASS ===");
     for statement in &statements {

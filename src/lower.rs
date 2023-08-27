@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
 use crate::ir::*;
-use crate::error::*;
-use crate::err;
 
 struct Memory {
     address: usize,
@@ -74,7 +72,7 @@ impl Lowerer {
                     self.jump_to(reg);
 
                     if num > 127 {
-                        for _ in 0..(255 - num) {
+                        for _ in 0..(256 - num as u16) {
                             self.bf_code.push('-');
                         }
                     }
@@ -98,7 +96,22 @@ impl Lowerer {
                     self.bf_code.push(']');
 
                 }
-                _ => {}
+                IRStatement::ReadByte(reg) => {
+                    self.jump_to(reg);
+                    self.bf_code.push(',');
+                }
+                IRStatement::WriteByte(reg) => {
+                    self.jump_to(reg);
+                    self.bf_code.push('.');
+                }
+                IRStatement::BeginWhile(reg) => {
+                    self.jump_to(reg);
+                    self.bf_code.push('[');
+                }
+                IRStatement::EndWhile(reg) => {
+                    self.jump_to(reg);
+                    self.bf_code.push(']');
+                }
             }
         }
 

@@ -95,7 +95,9 @@ pub enum Operator {
     LessThan,
     GreaterThan,
     Plus,
-    Minus
+    Minus,
+
+    AsBool
 
 }
 
@@ -110,6 +112,7 @@ impl Operator {
             ">" => Self::GreaterThan,
             "+" => Self::Plus,
             "-" => Self::Minus,
+            "?" => Self::AsBool,
             _ => return None
         }))
     }
