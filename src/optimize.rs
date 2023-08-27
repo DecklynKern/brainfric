@@ -75,6 +75,7 @@ enum OptimizeAction {
     ReplaceStatement(Vec<IRStatement>),
     DeleteWhile(Register),
     CombineAdd(u8, usize),
+    CombinePrevMove(usize, Register, Vec<Register>),
     None
 }
 
@@ -163,22 +164,17 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
             }
             IRStatement::MoveCell(to, from) => {
 
-                if to.is_empty() {
-                    if let Some(num) = known_value[from] {
-                        action = OptimizeAction::ReplaceStatement(vec![IRStatement::AddConst(*from, (256 - num as u16) as u8)]);
-                    }
-                }
-                else if let Some(num) = known_value[from] {
+                if let Some(num) = known_value[from]  {
 
                     let mut new_statements: Vec<_> = to.iter().map(
                         |reg| IRStatement::AddConst(*reg, num)
                     ).collect();
 
-                    new_statements.push(IRStatement::MoveCell(vec![], *from));
+                    new_statements.push(IRStatement::AddConst(*from, (256 - num as u16) as u8));
                     action = OptimizeAction::ReplaceStatement(new_statements);
 
                 }
-                else {
+                else  {
 
                     for reg in to {
                         known_value.insert(*reg, None);
@@ -186,6 +182,31 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                     
                     known_value.insert(*from, Some(0));
 
+                    for check_idx in (0..statement_idx).rev() {
+
+                        if let IRStatement::BeginWhile(_) = ir[check_idx] {
+                            break;
+                        }
+
+                        if let IRStatement::EndWhile(_) = ir[check_idx] {
+                            break;
+                        }
+
+                        if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
+
+                            if to2.contains(from) && !to.contains(from2) {
+                                action = OptimizeAction::CombinePrevMove(check_idx, *from, to.clone());
+                            }
+
+                            if !to.is_empty() {
+                                break;
+                            }
+                        }
+
+                        if ir[check_idx].references_reg(from) {
+                            break;
+                        }
+                    }
                 }
             }
             IRStatement::WriteByte(_) => {},
@@ -215,10 +236,6 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                 let mut check_idx = 0;
 
                 while check_idx < ir.len() {
-
-                    if check_idx < statement_idx {
-                        statement_idx -= 1;
-                    }
 
                     if ir[check_idx].delete_reg(&reg) {
                         ir.remove(check_idx);
@@ -272,6 +289,34 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                 ir.remove(statement_idx);
 
             }
+            OptimizeAction::CombinePrevMove(idx, reg, replace_regs) => {
+
+                if let IRStatement::MoveCell(to, _) = &mut ir[idx] {
+
+                    let mut del_idx = None;
+
+                    for i in 0..to.len() {
+                        if to[i] == reg {
+                            del_idx = Some(i);
+                        }
+                    }
+
+                    if let Some(reg_idx) = del_idx {
+                        to.remove(reg_idx);
+                    }
+                    else {
+                        panic!()
+                    }
+
+                    to.extend(replace_regs);
+
+                    ir.remove(statement_idx);
+
+                }
+                else {
+                    panic!()
+                }
+            }
             OptimizeAction::ReplaceStatement(new_ir) => {
 
                 ir.remove(statement_idx);
@@ -289,7 +334,6 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
         if did_action {
             return true;
         }
-
     }
 
     false

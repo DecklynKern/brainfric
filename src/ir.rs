@@ -131,61 +131,60 @@ impl IRGenerator {
         self.ir.push(IRStatement::EndWhile(var))
     }
 
-    fn evaluate_expression(&mut self, expression: &Expression, expected_type: &DataType) -> Result<(Register, bool), BrainFricError> {
+    fn evaluate_expression_into_reg(&mut self, expression: &Expression, expected_type: &DataType, reg: Register) -> Result<(), BrainFricError> {
 
-        let (reg, got_type) = match expression {
+        let got_type = match expression {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
-                ((var, false), data_type)
+                self.do_copy(reg, var, expected_type.clone());
+                data_type
             }
             Expression::NumberLiteral(value) => {
-                let reg = self.alloc_register(DataType::Byte);
                 self.do_add_const(reg, *value as u8);
-                ((reg, true), DataType::Byte)
+                DataType::Byte
             }
             Expression::BoolLiteral(value) => {
-                let reg = self.alloc_register(DataType::Bool);
                 self.do_add_const(reg, *value as u8);
-                ((reg, true), DataType::Bool)
+                DataType::Bool
             }
             Expression::Add(expr1, expr2) => {
-                
-                let reg3 = self.alloc_register(DataType::Byte);
-
-                let (reg1, is_reg1) = self.evaluate_expression(expr1, expected_type)?;
-                let (reg2, is_reg2) = self.evaluate_expression(expr2, expected_type)?;
-
-                if is_reg1 {
-                    self.do_move(&[reg3], reg1, expected_type.clone());
-                }
-                else {
-                    self.do_copy(reg3, reg1, expected_type.clone());
-                }
-
-                if is_reg2 {
-                    self.do_move(&[reg3], reg2, expected_type.clone());
-                }
-                else {
-                    self.do_copy(reg3, reg2, expected_type.clone());
-                }
-
-                self.try_free(reg2, is_reg2);
-                self.try_free(reg1, is_reg1);
-
-                ((reg3, true), DataType::Byte)
-
+                self.evaluate_expression_into_reg(expr1, expected_type, reg)?;
+                self.evaluate_expression_into_reg(expr2, expected_type, reg)?;
+                DataType::Byte
             }
             Expression::AsBool(expr) => {
                 // massive TODO
-                (self.evaluate_expression(expr, &DataType::Byte)?, DataType::Bool)
+                self.evaluate_expression_into_reg(expr, &DataType::Byte, reg)?;
+                DataType::Bool
             }
             _ => todo!()
         };
 
         self.assert_data_type(expected_type, &got_type)?;
 
-        Ok(reg)
+        Ok(())
 
+    }
+
+    fn evaluate_expression(&mut self, expression: &Expression, expected_type: &DataType) -> Result<(Register, bool), BrainFricError> {
+        
+        Ok(match expression {
+            Expression::Identifier(name) => {
+                let (reg, data_type) = self.get_name(name)?;
+                self.assert_data_type(expected_type, &data_type)?;
+                (reg, false)
+            }
+            Expression::AsBool(expr) if let Expression::Identifier(name) = expr.as_ref() => {
+                let (reg, _) = self.get_name(name)?;
+                self.assert_data_type(expected_type, &DataType::Bool)?;
+                (reg, false)
+            }
+            _ => {
+                let reg = self.alloc_register(expected_type.clone());
+                self.evaluate_expression_into_reg(expression, expected_type, reg)?;
+                (reg, true)
+            }
+        })
     }
     
     pub fn generate_ir(&mut self, mut statements: Vec<(usize, Statement)>) -> Result<Vec<IRStatement>, BrainFricError> {
@@ -205,12 +204,7 @@ impl IRGenerator {
                     let (var, data_type) = self.get_name(&name)?;
 
                     self.do_clear(var, data_type.clone());
-
-                    let (reg, is_reg) = self.evaluate_expression(&expression, &data_type.clone())?;
-
-                    self.do_move(&[var], reg, data_type);
-
-                    self.try_free(reg, is_reg);
+                    self.evaluate_expression_into_reg(&expression, &data_type.clone(), var)?;
 
                 }
                 Statement::Inc(name) => {
