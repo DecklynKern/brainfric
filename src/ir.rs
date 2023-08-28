@@ -14,7 +14,7 @@ pub enum IRStatement {
     MoveCell(Vec<Register>, Register),
     WriteByte(Register),
     ReadByte(Register),
-    BeginWhile(Register),
+    BeginWhile(Register, bool),
     EndWhile(Register)
 }
 
@@ -123,8 +123,8 @@ impl IRGenerator {
         self.ir.push(IRStatement::ReadByte(var));
     }
 
-    fn do_while(&mut self, var: Register) {
-        self.ir.push(IRStatement::BeginWhile(var));
+    fn do_while(&mut self, var: Register, run_once: bool) {
+        self.ir.push(IRStatement::BeginWhile(var, run_once));
     }
 
     fn do_end_while(&mut self, var: Register) {
@@ -230,7 +230,7 @@ impl IRGenerator {
                 Statement::While(expression, loop_statements) => {
 
                     let (reg1, is_reg1) = self.evaluate_expression(&expression, &DataType::Bool)?;
-                    self.do_while(reg1);
+                    self.do_while(reg1, false);
 
                     let loop_ir = self.generate_ir(loop_statements)?;
                     self.ir.extend(loop_ir);
@@ -245,6 +245,21 @@ impl IRGenerator {
 
                     self.try_free(reg2, is_reg2);
                     self.try_free(reg1, is_reg1);
+
+                }
+                Statement::If(expression, loop_statements) => {
+
+                    let reg = self.alloc_register(DataType::Bool);
+                    self.evaluate_expression_into_reg(&expression, &DataType::Bool, reg)?;
+                    self.do_while(reg, true);
+
+                    let loop_ir = self.generate_ir(loop_statements)?;
+                    self.ir.extend(loop_ir);
+
+                    self.do_clear(reg, DataType::Bool);
+                    self.do_end_while(reg);
+
+                    self.try_free(reg, true);
 
                 }
             }

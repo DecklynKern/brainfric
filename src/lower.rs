@@ -104,7 +104,7 @@ impl Lowerer {
                     self.jump_to(reg);
                     self.bf_code.push('.');
                 }
-                IRStatement::BeginWhile(reg) => {
+                IRStatement::BeginWhile(reg, _) => {
                     self.jump_to(reg);
                     self.bf_code.push('[');
                 }

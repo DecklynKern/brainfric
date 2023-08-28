@@ -110,7 +110,8 @@ pub enum Statement {
     Dec(Name),
     Write(Expression),
     Read(Name),
-    While(Expression, Vec<(usize, Statement)>)
+    While(Expression, Vec<(usize, Statement)>),
+    If(Expression, Vec<(usize, Statement)>)
 }
 
 impl Statement {
@@ -121,6 +122,40 @@ impl Statement {
             Self::Write(expression) => expression.uses_variable(variable),
             _ => false
         }
+    }
+}
+
+fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<Token>, current_line_num: usize) -> Result<(Expression, Vec<(usize, Statement)>), BrainFricError> {
+
+    if let Some(expression) = Expression::try_parse(&current_line[1..]) {
+
+        let mut loop_lines = Vec::new();
+        let mut loop_depth = 1;
+
+        while loop_depth > 0 {
+
+            if let Some(line) = tokens.pop() {
+
+                match line[0] {
+                    Token::Keyword(Keyword::If | Keyword::While) => loop_depth += 1,
+                    Token::Keyword(Keyword::End) => loop_depth -= 1,
+                    _ => {}
+                }
+
+                loop_lines.push(line);
+
+            }
+            else {
+                err!(current_line_num, ParseError::ExpectedEnd)
+            }
+        }
+
+        loop_lines.pop();
+        Ok((expression, parse(loop_lines, current_line_num)?))
+
+    }
+    else {
+        err!(current_line_num, ParseError::InvalidExpression);
     }
 }
 
@@ -198,39 +233,14 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
                 }
             }
             Token::Keyword(Keyword::While) => {
-                
-                if let Some(expression) = Expression::try_parse(&line[1..]) {
-
-                    let mut loop_lines = Vec::new();
-                    let mut loop_depth = 1;
-
-                    while loop_depth > 0 {
-
-                        if let Some(line) = tokens.pop() {
-
-                            if line[0] == Token::Keyword(Keyword::While) {
-                                loop_depth += 1;
-                            }
-                            else if line[0] == Token::Keyword(Keyword::End) && line.len() == 1 {
-                                loop_depth -= 1;
-                            }
-
-                            loop_lines.push(line);
-
-                        }
-                        else {
-                            err!(current_line_num, ParseError::ExpectedEnd)
-                        }
-                    }
-
-                    loop_lines.pop();
-                    Statement::While(expression, parse(loop_lines, current_line_num)?)
-
-                }
-                else {
-                    err!(current_line_num, ParseError::InvalidExpression);
-                }
-
+                let (expression, loop_statements) = 
+                    parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
+                Statement::While(expression, loop_statements)
+            }
+            Token::Keyword(Keyword::If) => {
+                let (expression, loop_statements) = 
+                    parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
+                Statement::If(expression, loop_statements)
             }
             _ => err!(current_line_num, ParseError::InvalidStatement)
         }));

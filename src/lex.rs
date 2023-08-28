@@ -13,6 +13,7 @@ pub enum Keyword {
     Dec,
 
     While,
+    If,
     End,
 
     Write,
@@ -38,6 +39,7 @@ impl Keyword {
             "inc" => Self::Inc,
             "dec" => Self::Dec,
             "while" => Self::While,
+            "if" => Self::If,
             "end" => Self::End,
             "write" => Self::Write,
             "read" => Self::Read,

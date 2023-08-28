@@ -1,13 +1,8 @@
 byte a
-byte b
-byte c
 
-a <- 0
-b <- 1
+a <- 50
 
-while ?b
-  c <- a + b
-  a <- b 
-  b <- c
-  write b
+if ?a
+  a <- 100
+  write a
 end

@@ -8,7 +8,7 @@ impl IRStatement {
 
         match self {
             Self::MoveCell(_, from) => *from == *check_reg,
-            Self::WriteByte(reg) | Self::BeginWhile(reg) => *reg == *check_reg,
+            Self::WriteByte(reg) | Self::BeginWhile(reg, _) => *reg == *check_reg,
             Self::ReadByte(reg) => *reg == *check_reg, // add compiler flag
             _ => false
         }
@@ -19,7 +19,7 @@ impl IRStatement {
             Self::MoveCell(to, from) =>
                 *from == *check_reg || to.contains(check_reg),
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::WriteByte(reg) |
-            Self::ReadByte(reg) | Self::BeginWhile(reg) | Self::EndWhile(reg) |
+            Self::ReadByte(reg) | Self::BeginWhile(reg, _) | Self::EndWhile(reg) |
             Self::Free(reg) =>
                 *reg == *check_reg
         }
@@ -55,7 +55,7 @@ impl IRStatement {
                     false
                 }
             }
-            Self::BeginWhile(reg) => {
+            Self::BeginWhile(reg, _) => {
                 if *reg == *check_reg {
                     panic!("attempted to delete used value")
                 }
@@ -105,7 +105,7 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                             IRStatement::Free(reg2) => if reg == reg2 {
                                 break;
                             }
-                            IRStatement::BeginWhile(_) | IRStatement::EndWhile(_) => {
+                            IRStatement::BeginWhile(_, _) | IRStatement::EndWhile(_) => {
                                 delete = false;
                                 break;
                             }
@@ -131,7 +131,7 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                     
                     for check_idx in (statement_idx + 1)..ir.len() {
 
-                        if let IRStatement::BeginWhile(_) = ir[check_idx] {
+                        if let IRStatement::BeginWhile(_, _) = ir[check_idx] {
                             break;
                         }
 
@@ -184,7 +184,7 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
 
                     for check_idx in (0..statement_idx).rev() {
 
-                        if let IRStatement::BeginWhile(_) = ir[check_idx] {
+                        if let IRStatement::BeginWhile(_, _) = ir[check_idx] {
                             break;
                         }
 
@@ -213,11 +213,11 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
             IRStatement::ReadByte(reg) => {
                 known_value.insert(*reg, None);
             }
-            IRStatement::BeginWhile(reg) => {
+            IRStatement::BeginWhile(reg, run_once) => {
                 if let Some(num) = known_value[reg] && num == 0 {
                     action = OptimizeAction::DeleteWhile(*reg);
                 }
-                else {
+                else if !run_once {
                     for val in known_value.values_mut() {
                         *val = None;
                     }
