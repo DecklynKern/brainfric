@@ -2,12 +2,28 @@ use crate::error::*;
 use crate::err;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Keyword {
-    
+pub enum Type {
     Bool,
     Byte,
     Short,
     Array,
+}
+
+impl Type {
+
+    fn try_parse(token: &String) -> Option<Token> {
+        Some(Token::Type(match token.as_str() {
+            "bool" => Self::Bool,
+            "byte" => Self::Byte,
+            "short" => Self::Short,
+            "array" => Self::Array,
+            _ => return None
+        }))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Keyword {
 
     Inc,
     Dec,
@@ -22,20 +38,9 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    
-    pub fn is_type(&self) -> bool {
-        match self {
-            Self::Bool | Self::Byte | Self::Short | Self::Array => true,
-            _ => false
-        }
-    }
 
     fn try_parse(token: &String) -> Option<Token> {
         Some(Token::Keyword(match token.as_str() {
-            "bool" => Self::Bool,
-            "byte" => Self::Byte,
-            "short" => Self::Short,
-            "array" => Self::Array,
             "inc" => Self::Inc,
             "dec" => Self::Dec,
             "while" => Self::While,
@@ -89,7 +94,23 @@ impl Separator {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Operator {
+pub enum UnaryOperator {
+    AsBool
+}
+
+impl UnaryOperator {
+    
+    fn try_parse(token: &String) -> Option<Token> {
+
+        Some(Token::UnaryOperator(match token.as_str() {
+            "?" => Self::AsBool,
+            _ => return None
+        }))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BinaryOperator {
 
     SetTo,
 
@@ -99,22 +120,24 @@ pub enum Operator {
     Plus,
     Minus,
 
-    AsBool
+    And,
+    Or
 
 }
 
-impl Operator {
+impl BinaryOperator {
     
     fn try_parse(token: &String) -> Option<Token> {
 
-        Some(Token::Operator(match token.as_str() {
+        Some(Token::BinaryOperator(match token.as_str() {
             "<-" => Self::SetTo,
             "=" => Self::Equals,
             "<" => Self::LessThan,
             ">" => Self::GreaterThan,
             "+" => Self::Plus,
             "-" => Self::Minus,
-            "?" => Self::AsBool,
+            "&" => Self::And,
+            "|" => Self::Or,
             _ => return None
         }))
     }
@@ -123,10 +146,12 @@ impl Operator {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
     Identifier(String),
+    Type(Type),
     Keyword(Keyword),
     Literal(Literal),
     Separator(Separator),
-    Operator(Operator)
+    UnaryOperator(UnaryOperator),
+    BinaryOperator(BinaryOperator)
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -165,6 +190,9 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
             if let Some(token) = Keyword::try_parse(&current_token) {
                 tokens.push(token);
             }
+            else if let Some(token) = Type::try_parse(&current_token) {
+                tokens.push(token);
+            }
             else if let Some(token) = Literal::try_parse_bool(&current_token) {
                 tokens.push(token);
             }
@@ -191,12 +219,12 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
         else if let Some(token) = Separator::try_parse(&current_token) {
             tokens.push(token);
         }
-        else if let Some(token) = Operator::try_parse(&current_token) {
+        else if let Some(token) = BinaryOperator::try_parse(&current_token) {
 
             let mut try_add = current_token.clone();
             try_add.push(chr);
 
-            if let Some(_) = Operator::try_parse(&try_add) {
+            if let Some(_) = BinaryOperator::try_parse(&try_add) {
                 current_token.push(chr);
                 continue;
             }

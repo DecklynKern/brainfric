@@ -8,12 +8,12 @@ fn basic_lexer_check() {
         lex::lex(&"   byte     a   \n  a  <-  240  ".to_string()).unwrap_or_else(|_| panic!()),
         vec![
             vec![
-                lex::Token::Keyword(lex::Keyword::Byte),
+                lex::Token::Type(lex::Type::Byte),
                 lex::Token::Identifier("a".to_string())
             ],
             vec![
                 lex::Token::Identifier("a".to_string()),
-                lex::Token::Operator(lex::Operator::SetTo),
+                lex::Token::BinaryOperator(lex::BinaryOperator::SetTo),
                 lex::Token::Literal(lex::Literal::Number(240))
             ]
         ]
@@ -26,12 +26,12 @@ fn basic_parser_check() {
     assert_eq!(
         parse::parse(vec![
             vec![
-                lex::Token::Keyword(lex::Keyword::Byte),
+                lex::Token::Type(lex::Type::Byte),
                 lex::Token::Identifier("a".to_string())
             ],
             vec![
                 lex::Token::Identifier("a".to_string()),
-                lex::Token::Operator(lex::Operator::SetTo),
+                lex::Token::BinaryOperator(lex::BinaryOperator::SetTo),
                 lex::Token::Literal(lex::Literal::Number(240))
             ]
         ], 0).unwrap_or_else(|_| panic!()),

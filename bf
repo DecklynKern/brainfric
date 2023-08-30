@@ -1,8 +1,7 @@
 byte a
+byte b
+byte c
 
-a <- 50
-
-if ?a
-  a <- 100
-  write a
-end
+read a
+read b
+c <- a - b

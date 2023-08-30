@@ -66,25 +66,31 @@ impl Expression {
                 None
             }
         }
-        else if tokens[0] == Token::Operator(Operator::AsBool) {
-            if let Some(expr) = Expression::try_parse(&tokens[1..]) {
-                Some(Self::AsBool(Box::new(expr)))
-            }
-            else {
-                None
-            }
-        } else if tokens[1] == Token::Operator(Operator::Plus) {
-            if let Some(expr1) = Expression::try_parse(&tokens[0..1]) {
-                if let Some(expr2) = Expression::try_parse(&tokens[2..]) {
-                    Some(Self::Add(Box::new(expr1), Box::new(expr2)))
+        else if let Token::UnaryOperator(operator) = &tokens[0] {
+            Expression::try_parse(&tokens[1..]).map(
+                |expr| match operator {
+                    UnaryOperator::AsBool =>
+                        Self::AsBool(Box::new(expr))
                 }
-                else {
-                    None
-                }
-            }
-            else {
-                None
-            }
+            )
+        }
+        else if let Token::BinaryOperator(operator) = &tokens[1] {
+
+            // TODO: actual binary operator parsing that doesn't suck
+            Expression::try_parse(&tokens[0..1]).and_then(
+                |expr1| Expression::try_parse(&tokens[2..]).map(
+                    |expr2| match operator {
+                        BinaryOperator::Plus => Self::Add(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::Minus => Self::Subtract(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::Equals => Self::Equals(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::GreaterThan => Self::GreaterThan(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::LessThan => Self::LessThan(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::And => Self::Equals(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::Or => Self::Equals(Box::new(expr1), Box::new(expr2)),
+                        _ => todo!()
+                    }
+                )
+            )
         }
         else {
             None
@@ -174,25 +180,25 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
         }
 
         statements.push((current_line_num, match &line[0] {
-            Token::Keyword(keyword) if let Token::Identifier(name) = &line[1] && keyword.is_type() => {
+            Token::Type(var_type) if let Token::Identifier(name) = &line[1] => {
 
-                if *keyword == Keyword::Bool {
+                if *var_type == Type::Bool {
                     Statement::Declaration(name.clone(), DataType::Bool) 
                 }
-                else if *keyword == Keyword::Byte {
+                else if *var_type == Type::Byte {
                     Statement::Declaration(name.clone(), DataType::Byte)
                 }
-                else if *keyword == Keyword::Short {
+                else if *var_type == Type::Short {
                     Statement::Declaration(name.clone(), DataType::Short)
                 }
-                else if *keyword == Keyword::Array {
+                else if *var_type == Type::Array {
                     todo!();
                 }
                 else {
                     err!(current_line_num, ParseError::InvalidStatement);
                 }
             }
-            Token::Identifier(name) if Token::Operator(Operator::SetTo) == line[1] => {
+            Token::Identifier(name) if Token::BinaryOperator(BinaryOperator::SetTo) == line[1] => {
                 if let Some(expression) = Expression::try_parse(&line[2..]) {
                     Statement::SetTo(name.clone(), expression)
                 }

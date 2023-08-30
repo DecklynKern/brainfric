@@ -7,7 +7,7 @@ impl IRStatement {
     pub fn uses_reg_value(&self, check_reg: &Register) -> bool {
 
         match self {
-            Self::MoveCell(_, from) => *from == *check_reg,
+            Self::MoveCell(_, from) | Self::SubCell(_, from) => *from == *check_reg,
             Self::WriteByte(reg) | Self::BeginWhile(reg, _) => *reg == *check_reg,
             Self::ReadByte(reg) => *reg == *check_reg, // add compiler flag
             _ => false
@@ -16,7 +16,7 @@ impl IRStatement {
 
     pub fn references_reg(&self, check_reg: &Register) -> bool {
         match self {
-            Self::MoveCell(to, from) =>
+            Self::MoveCell(to, from) | Self::SubCell(to, from) =>
                 *from == *check_reg || to.contains(check_reg),
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::WriteByte(reg) |
             Self::ReadByte(reg) | Self::BeginWhile(reg, _) | Self::EndWhile(reg) |
@@ -30,7 +30,7 @@ impl IRStatement {
         match self {
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::Free(reg)
                 => *reg == *check_reg,
-            Self::MoveCell(to, from) => {
+            Self::MoveCell(to, from) | Self::SubCell(to, from) => {
                 if *from == *check_reg {
                     panic!("attempted to delete used value")
                 }
@@ -74,6 +74,7 @@ enum OptimizeAction {
     DeleteStatement,
     ReplaceStatement(Vec<IRStatement>),
     DeleteWhile(Register),
+    DeleteIfEnds(Register),
     CombineAdd(u8, usize),
     CombinePrevMove(usize, Register, Vec<Register>),
     None
@@ -209,6 +210,19 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
                     }
                 }
             }
+            IRStatement::SubCell(to, from) => {
+
+                if let Some(num) = known_value[from]  {
+
+                    let mut new_statements: Vec<_> = to.iter().map(
+                        |reg| IRStatement::AddConst(*reg, (256 - num as u16) as u8)
+                    ).collect();
+
+                    new_statements.push(IRStatement::AddConst(*from, num));
+                    action = OptimizeAction::ReplaceStatement(new_statements);
+
+                }
+            }
             IRStatement::WriteByte(_) => {},
             IRStatement::ReadByte(reg) => {
                 known_value.insert(*reg, None);
@@ -216,6 +230,9 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
             IRStatement::BeginWhile(reg, run_once) => {
                 if let Some(num) = known_value[reg] && num == 0 {
                     action = OptimizeAction::DeleteWhile(*reg);
+                }
+                else if let Some(num) = known_value[reg] && num != 0 && *run_once {
+                    action = OptimizeAction::DeleteIfEnds(*reg);
                 }
                 else if !run_once {
                     for val in known_value.values_mut() {
@@ -261,6 +278,22 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
 
                     ir.remove(statement_idx);
 
+                }
+
+                ir.remove(statement_idx);
+
+            }
+            OptimizeAction::DeleteIfEnds(if_reg) => {
+
+                for idx in ((statement_idx + 1)..ir.len()).rev() {
+
+                    match ir[idx] {
+                        IRStatement::EndWhile(reg) => if reg == if_reg {
+                            ir.remove(idx);
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
 
                 ir.remove(statement_idx);

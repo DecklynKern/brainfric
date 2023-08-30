@@ -96,6 +96,20 @@ impl Lowerer {
                     self.bf_code.push(']');
 
                 }
+                IRStatement::SubCell(to, from) => {
+
+                    self.jump_to(from);
+                    self.bf_code.push_str("[-");
+
+                    for reg in to {
+                        self.jump_to(reg);
+                        self.bf_code.push('-');
+                    }
+
+                    self.jump_to(from);
+                    self.bf_code.push(']');
+
+                }
                 IRStatement::ReadByte(reg) => {
                     self.jump_to(reg);
                     self.bf_code.push(',');

@@ -12,6 +12,7 @@ pub enum IRStatement {
     Free(Register),
     AddConst(Register, u8),
     MoveCell(Vec<Register>, Register),
+    SubCell(Vec<Register>, Register),
     WriteByte(Register),
     ReadByte(Register),
     BeginWhile(Register, bool),
@@ -93,10 +94,24 @@ impl IRGenerator {
         });
     }
 
+    fn do_move_negative(&mut self, to: &[Register], from: Register, data_type: DataType) {
+        self.ir.push(match data_type {
+            DataType::Byte | DataType::Bool => IRStatement::SubCell(to.to_vec(), from),
+            _ => todo!()
+        });
+    }
+
     fn do_copy(&mut self, to: Register, from: Register, data_type: DataType) {
         let reg = self.alloc_register(data_type.clone());
         self.do_move(&[reg, to], from, data_type.clone());
         self.do_move(&[from], reg, data_type);
+        self.try_free(reg, true);
+    }
+
+    fn do_copy_negative(&mut self, to: Register, from: Register, data_type: DataType) {
+        let reg = self.alloc_register(data_type.clone());
+        self.do_move(&[reg], from, data_type.clone());
+        self.do_move_negative(&[from, to], reg, data_type);
         self.try_free(reg, true);
     }
 
@@ -131,30 +146,50 @@ impl IRGenerator {
         self.ir.push(IRStatement::EndWhile(var))
     }
 
-    fn evaluate_expression_into_reg(&mut self, expression: &Expression, expected_type: &DataType, reg: Register) -> Result<(), BrainFricError> {
+    fn evaluate_expression_into_reg(&mut self, expression: &Expression, expected_type: &DataType, reg: Register, negate: bool) -> Result<(), BrainFricError> {
 
         let got_type = match expression {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
-                self.do_copy(reg, var, expected_type.clone());
+                if negate {
+                    self.do_copy_negative(reg, var, expected_type.clone());
+                }
+                else {
+                    self.do_copy(reg, var, expected_type.clone());
+                }
                 data_type
             }
             Expression::NumberLiteral(value) => {
-                self.do_add_const(reg, *value as u8);
+                if negate {
+                    self.do_sub_const(reg, *value as u8);
+                }
+                else {
+                    self.do_add_const(reg, *value as u8);
+                }
                 DataType::Byte
             }
             Expression::BoolLiteral(value) => {
-                self.do_add_const(reg, *value as u8);
+                if negate {
+                    self.do_sub_const(reg, *value as u8);
+                }
+                else {
+                    self.do_add_const(reg, *value as u8);
+                }
                 DataType::Bool
             }
             Expression::Add(expr1, expr2) => {
-                self.evaluate_expression_into_reg(expr1, expected_type, reg)?;
-                self.evaluate_expression_into_reg(expr2, expected_type, reg)?;
+                self.evaluate_expression_into_reg(expr1, expected_type, reg, negate)?;
+                self.evaluate_expression_into_reg(expr2, expected_type, reg, negate)?;
+                DataType::Byte
+            }
+            Expression::Subtract(expr1, expr2) => {
+                self.evaluate_expression_into_reg(expr1, expected_type, reg, negate)?;
+                self.evaluate_expression_into_reg(expr2, expected_type, reg, !negate)?;
                 DataType::Byte
             }
             Expression::AsBool(expr) => {
                 // massive TODO
-                self.evaluate_expression_into_reg(expr, &DataType::Byte, reg)?;
+                self.evaluate_expression_into_reg(expr, &DataType::Byte, reg, false)?;
                 DataType::Bool
             }
             _ => todo!()
@@ -181,7 +216,7 @@ impl IRGenerator {
             }
             _ => {
                 let reg = self.alloc_register(expected_type.clone());
-                self.evaluate_expression_into_reg(expression, expected_type, reg)?;
+                self.evaluate_expression_into_reg(expression, expected_type, reg, false)?;
                 (reg, true)
             }
         })
@@ -204,7 +239,7 @@ impl IRGenerator {
                     let (var, data_type) = self.get_name(&name)?;
 
                     self.do_clear(var, data_type.clone());
-                    self.evaluate_expression_into_reg(&expression, &data_type.clone(), var)?;
+                    self.evaluate_expression_into_reg(&expression, &data_type.clone(), var, false)?;
 
                 }
                 Statement::Inc(name) => {
@@ -250,7 +285,7 @@ impl IRGenerator {
                 Statement::If(expression, loop_statements) => {
 
                     let reg = self.alloc_register(DataType::Bool);
-                    self.evaluate_expression_into_reg(&expression, &DataType::Bool, reg)?;
+                    self.evaluate_expression_into_reg(&expression, &DataType::Bool, reg, false)?;
                     self.do_while(reg, true);
 
                     let loop_ir = self.generate_ir(loop_statements)?;
