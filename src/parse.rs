@@ -109,18 +109,18 @@ impl Expression {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Statement {
+pub enum StatementBody {
     Declaration(Name, DataType),
     SetTo(Name, Expression),
     Inc(Name),
     Dec(Name),
     Write(Expression),
     Read(Name),
-    While(Expression, Vec<(usize, Statement)>),
-    If(Expression, Vec<(usize, Statement)>)
+    While(Expression, Vec<Statement>),
+    If(Expression, Vec<Statement>)
 }
 
-impl Statement {
+impl StatementBody {
 
     pub fn uses_variable(&self, variable: &Name) -> bool {
 
@@ -131,7 +131,19 @@ impl Statement {
     }
 }
 
-fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<Token>, current_line_num: usize) -> Result<(Expression, Vec<(usize, Statement)>), BrainFricError> {
+#[derive(PartialEq, Eq)]
+pub struct Statement {
+    pub line_num: usize,
+    pub body: StatementBody
+}
+
+impl std::fmt::Debug for Statement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {:#?}", self.line_num, self.body)
+    }
+}
+
+fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<Token>, current_line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
 
     if let Some(expression) = Expression::try_parse(&current_line[1..]) {
 
@@ -165,7 +177,7 @@ fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<
     }
 }
 
-pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<(usize, Statement)>, BrainFricError> {
+pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<Statement>, BrainFricError> {
 
     tokens.reverse();
 
@@ -175,21 +187,21 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
 
         current_line_num += 1;
 
-        if line.len() < 2 {
+        if line.len() < 1 {
             continue;
         }
 
-        statements.push((current_line_num, match &line[0] {
+        let body = match &line[0] {
             Token::Type(var_type) if let Token::Identifier(name) = &line[1] => {
 
                 if *var_type == Type::Bool {
-                    Statement::Declaration(name.clone(), DataType::Bool) 
+                    StatementBody::Declaration(name.clone(), DataType::Bool) 
                 }
                 else if *var_type == Type::Byte {
-                    Statement::Declaration(name.clone(), DataType::Byte)
+                    StatementBody::Declaration(name.clone(), DataType::Byte)
                 }
                 else if *var_type == Type::Short {
-                    Statement::Declaration(name.clone(), DataType::Short)
+                    StatementBody::Declaration(name.clone(), DataType::Short)
                 }
                 else if *var_type == Type::Array {
                     todo!();
@@ -200,7 +212,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
             }
             Token::Identifier(name) if Token::BinaryOperator(BinaryOperator::SetTo) == line[1] => {
                 if let Some(expression) = Expression::try_parse(&line[2..]) {
-                    Statement::SetTo(name.clone(), expression)
+                    StatementBody::SetTo(name.clone(), expression)
                 }
                 else {
                     err!(current_line_num, ParseError::InvalidExpression);
@@ -208,7 +220,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
             }
             Token::Keyword(Keyword::Inc) => {
                 if let Token::Identifier(name) = &line[1] {
-                    Statement::Inc(name.clone())
+                    StatementBody::Inc(name.clone())
                 }
                 else {
                     err!(current_line_num, ParseError::ExpectedIdentifier);
@@ -216,7 +228,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
             }
             Token::Keyword(Keyword::Dec) => {
                 if let Token::Identifier(name) = &line[1] {
-                    Statement::Dec(name.clone())
+                    StatementBody::Dec(name.clone())
                 }
                 else {
                     err!(current_line_num, ParseError::ExpectedIdentifier);
@@ -224,15 +236,18 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
             }
             Token::Keyword(Keyword::Write) => {
                 if let Some(expression) = Expression::try_parse(&line[1..]) {
-                    Statement::Write(expression)
+                    StatementBody::Write(expression)
                 }
                 else {
                     err!(current_line_num, ParseError::InvalidExpression);
                 }
             }
+            Token::Keyword(Keyword::WriteLine) => {
+                StatementBody::Write(Expression::NumberLiteral(10))
+            }
             Token::Keyword(Keyword::Read) => {
                 if let Token::Identifier(name) = &line[1] {
-                    Statement::Read(name.clone())
+                    StatementBody::Read(name.clone())
                 }
                 else {
                     err!(current_line_num, ParseError::ExpectedIdentifier);
@@ -241,15 +256,20 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
             Token::Keyword(Keyword::While) => {
                 let (expression, loop_statements) = 
                     parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
-                Statement::While(expression, loop_statements)
+                StatementBody::While(expression, loop_statements)
             }
             Token::Keyword(Keyword::If) => {
                 let (expression, loop_statements) = 
                     parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
-                Statement::If(expression, loop_statements)
+                StatementBody::If(expression, loop_statements)
             }
             _ => err!(current_line_num, ParseError::InvalidStatement)
-        }));
+        };
+
+        statements.push(Statement {
+            line_num: current_line_num,
+            body
+        });
     }
 
     Ok(statements)

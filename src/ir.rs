@@ -62,8 +62,15 @@ impl IRGenerator {
     }
 
     fn try_free(&mut self, reg: Register, is_reg: bool) {
+        
         if is_reg {
+
+            self.do_clear(reg, DataType::Byte);
             self.ir.push(IRStatement::Free(reg));
+
+            // if reg == self.next_register - 1 {
+            //     self.next_register -= 1;
+            // }
         }
     }
 
@@ -222,19 +229,19 @@ impl IRGenerator {
         })
     }
     
-    pub fn generate_ir(&mut self, mut statements: Vec<(usize, Statement)>) -> Result<Vec<IRStatement>, BrainFricError> {
+    pub fn generate_ir(&mut self, mut statements: Vec<Statement>) -> Result<Vec<IRStatement>, BrainFricError> {
 
         statements.reverse();
         
-        while let Some((line_num, statement)) = statements.pop() {
+        while let Some(statement) = statements.pop() {
 
-            self.current_line_num = line_num;
+            self.current_line_num = statement.line_num;
             
-            match statement {
-                Statement::Declaration(name, data_type) => {
+            match statement.body {
+                StatementBody::Declaration(name, data_type) => {
                     self.alloc_named(name, data_type);
                 }
-                Statement::SetTo(name, expression) => {
+                StatementBody::SetTo(name, expression) => {
 
                     let (var, data_type) = self.get_name(&name)?;
 
@@ -242,27 +249,46 @@ impl IRGenerator {
                     self.evaluate_expression_into_reg(&expression, &data_type.clone(), var, false)?;
 
                 }
-                Statement::Inc(name) => {
+                StatementBody::Inc(name) => {
                     let (var, data_type) = self.get_name(&name)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_add_const(var, 1);
                 }
-                Statement::Dec(name) => {
+                StatementBody::Dec(name) => {
                     let (var, data_type) = self.get_name(&name)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_sub_const(var, 1);
                 }
-                Statement::Write(expression) => {
+                StatementBody::Write(expression) => {
+
+                    if let Expression::StringLiteral(literal) = expression {
+
+                        let reg = self.alloc_register(DataType::Byte);
+
+                        let mut val = 0u8;
+
+                        for chr in literal.chars() {
+                            self.do_add_const(reg, (chr as u8).wrapping_sub(val));
+                            self.do_write(reg);
+                            val = chr as u8;
+                        }
+
+                        self.try_free(reg, true);
+                        continue;
+                    
+                    }
+
                     let (reg, is_reg) = self.evaluate_expression(&expression, &DataType::Byte)?;
                     self.do_write(reg);
                     self.try_free(reg, is_reg);
+
                 }
-                Statement::Read(name) => {
+                StatementBody::Read(name) => {
                     let (var, data_type) = self.get_name(&name)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_read(var);
                 }
-                Statement::While(expression, loop_statements) => {
+                StatementBody::While(expression, loop_statements) => {
 
                     let (reg1, is_reg1) = self.evaluate_expression(&expression, &DataType::Bool)?;
                     self.do_while(reg1, false);
@@ -282,7 +308,7 @@ impl IRGenerator {
                     self.try_free(reg1, is_reg1);
 
                 }
-                Statement::If(expression, loop_statements) => {
+                StatementBody::If(expression, loop_statements) => {
 
                     let reg = self.alloc_register(DataType::Bool);
                     self.evaluate_expression_into_reg(&expression, &DataType::Bool, reg, false)?;

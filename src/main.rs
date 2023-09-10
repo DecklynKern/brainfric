@@ -6,12 +6,14 @@ use std::io::prelude::*;
 
 use error::BrainFricError;
 
+mod args;
 mod error;
 mod lex;
 mod parse;
 mod ir;
 mod optimize;
 mod lower;
+mod clean;
 
 fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
@@ -26,10 +28,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     let statements = parse::parse(tokenized, 0)?;
 
     println!("=== PARSER PASS ===");
-    for statement in &statements {
-        println!("{statement:?}");
-    }
-    println!();
+    print!("{statements:#?}\n");
 
     let mut ir_generator = ir::IRGenerator::new();
     let mut ir = ir_generator.generate_ir(statements)?;
@@ -39,24 +38,28 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
         println!("{ir_statement:?}");
     }
 
-    let mut pass = 0;
-    
-    while optimize::optimize(&mut ir) {
-
-        pass += 1;
-
-        println!("\n=== OPTIMIZER PASS {pass} ===");
+    if args::arg_do_optimization() {
+   
+        let passes = optimize::optimize(&mut ir);
+        
+        println!("\n=== FINAL OPTIMIZER PASS ({passes} PASSES) ===");
         for ir_statement in &ir {
             println!("{ir_statement:?}");
         }
     }
 
     let mut lowerer = lower::Lowerer::new();
-    Ok(lowerer.lower(ir))
+    let mut bf_code = lowerer.lower(ir);
+
+    clean::clean(&mut bf_code);
+
+    Ok(bf_code)
 
 }
 
 fn main() -> std::io::Result<()> {
+
+    args::parse_args();
 
     let mut file = File::open("bf")?;
 

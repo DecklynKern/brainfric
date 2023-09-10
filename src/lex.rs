@@ -33,6 +33,7 @@ pub enum Keyword {
     End,
 
     Write,
+    WriteLine,
     Read
 
 }
@@ -47,6 +48,7 @@ impl Keyword {
             "if" => Self::If,
             "end" => Self::End,
             "write" => Self::Write,
+            "writeln" => Self::WriteLine,
             "read" => Self::Read,
             _ => return None
         }))
@@ -217,6 +219,9 @@ fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFric
             continue;
         }
         else if let Some(token) = Separator::try_parse(&current_token) {
+            tokens.push(token);
+        }
+        else if let Some(token) = UnaryOperator::try_parse(&current_token) {
             tokens.push(token);
         }
         else if let Some(token) = BinaryOperator::try_parse(&current_token) {

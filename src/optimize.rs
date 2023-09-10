@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::args::arg_show_optimization_steps;
 use crate::ir::*;
 
 impl IRStatement {
@@ -80,10 +81,33 @@ enum OptimizeAction {
     None
 }
 
-pub fn optimize(ir: &mut Vec<IRStatement>) -> bool {
+pub fn optimize(ir: &mut Vec<IRStatement>) -> u32 {
+
+    let mut passes = 1;
+    let mut known_value = HashMap::new();
+
+    while optimize_pass(ir, &mut known_value) {
+
+        passes += 1;
+        known_value.clear();
+
+        if !arg_show_optimization_steps() {
+            continue;
+        }
+
+        println!("\n=== OPTIMIZER PASS #{passes} ===");
+        for ir_statement in ir.iter() {
+            println!("{ir_statement:?}");
+        }
+    }
+
+    passes
+
+}
+
+fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Option<u8>>) -> bool {
 
     let mut statement_idx = 0;
-    let mut known_value = HashMap::new();
 
     while statement_idx < ir.len() {
 
