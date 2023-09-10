@@ -5,20 +5,21 @@ use crate::ir::*;
 
 impl IRStatement {
 
-    pub fn uses_reg_value(&self, check_reg: &Register) -> bool {
+    pub fn uses_reg_value(&self, check_reg: &Address) -> bool {
 
         match self {
-            Self::MoveCell(_, from) | Self::SubCell(_, from) => *from == *check_reg,
+            Self::MoveCell(_, from) | Self::SubCell(_, from) | Self::MoveBool(_, from) => *from == *check_reg,
             Self::WriteByte(reg) | Self::BeginWhile(reg, _) => *reg == *check_reg,
             Self::ReadByte(reg) => *reg == *check_reg, // add compiler flag
             _ => false
         }
     }
 
-    pub fn references_reg(&self, check_reg: &Register) -> bool {
+    pub fn references_reg(&self, check_reg: &Address) -> bool {
         match self {
             Self::MoveCell(to, from) | Self::SubCell(to, from) =>
                 *from == *check_reg || to.contains(check_reg),
+            Self::MoveBool(to, from) => *to == *check_reg || *from == *check_reg,
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::WriteByte(reg) |
             Self::ReadByte(reg) | Self::BeginWhile(reg, _) | Self::EndWhile(reg) |
             Self::Free(reg) =>
@@ -26,11 +27,11 @@ impl IRStatement {
         }
     }
 
-    pub fn delete_reg(&mut self, check_reg: &Register) -> bool {
+    pub fn delete_reg(&mut self, check_reg: &Address) -> bool {
 
-        match self {
+        let replace_statement = match self {
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::Free(reg)
-                => *reg == *check_reg,
+                => return *reg == *check_reg,
             Self::MoveCell(to, from) | Self::SubCell(to, from) => {
                 if *from == *check_reg {
                     panic!("attempted to delete used value")
@@ -44,40 +45,47 @@ impl IRStatement {
                         }
                     }
 
-                    false
+                    return false;
 
                 }
             }
-            Self::WriteByte(reg) | Self::ReadByte(reg) => {
+            Self::MoveBool(to, from) => {
+                if *from == *check_reg {
+                    panic!("attempted to delete used value")
+                }
+                else if *to == *check_reg {
+                    IRStatement::MoveCell(vec![], *from)
+
+                } else {
+                    return false;
+                }
+            }
+            Self::WriteByte(reg) | Self::ReadByte(reg) | Self::BeginWhile(reg, _) => {
                 if *reg == *check_reg {
                     panic!("attempted to delete used value")
                 }
-                else {
-                    false
-                }
+
+                return false;
+
             }
-            Self::BeginWhile(reg, _) => {
-                if *reg == *check_reg {
-                    panic!("attempted to delete used value")
-                }
-                else {
-                    false
-                }
-            }
-            Self::EndWhile(_) => false
-        }
+            Self::EndWhile(_) => return false
+        };
+
+        let _ = std::mem::replace(self, replace_statement);
+        false
+
     }
 }
 
 #[derive(Debug)]
 enum OptimizeAction {
-    DeleteReg(Register),
+    DeleteReg(Address),
     DeleteStatement,
     ReplaceStatement(Vec<IRStatement>),
-    DeleteWhile(Register),
-    DeleteIfEnds(Register),
+    DeleteWhile(Address),
+    DeleteIfEnds(Address),
     CombineAdd(u8, usize),
-    CombinePrevMove(usize, Register, Vec<Register>),
+    CombinePrevMove(usize, Address, Vec<Address>),
     None
 }
 
@@ -266,6 +274,16 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
             }
             IRStatement::EndWhile(reg) => {
                 known_value.insert(*reg, Some(0));
+            }
+            IRStatement::MoveBool(to, from) => {
+
+                let old_value = known_value.insert(*from, Some(0));
+
+                match old_value {
+                    Some(Some(val)) => known_value.insert(*to, Some((val != 0) as u8)),
+                    Some(None) => None,
+                    None => panic!()
+                };
             }
         }
 

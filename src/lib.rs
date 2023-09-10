@@ -1,5 +1,6 @@
 #![feature(let_chains)]
 #![feature(if_let_guard)]
+#![feature(box_patterns)]
 
 pub mod args;
 pub mod error;

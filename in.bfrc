@@ -1,0 +1,22 @@
+byte a
+bool b
+
+read a
+
+b <- ?a
+
+// optimal  ,[->>+<+<]>[-<+>]>[<+>[-]]
+// MoveCell([1, 2], 0)
+// MoveCell([0], 1)
+// MoveBool(1, 2)
+
+// get      ,[->>>+<+<<]>>>[-<<<+>>>]<[<+>[-]]
+
+// get2     
+
+
+
+// byte a
+// read a
+
+// a <- a

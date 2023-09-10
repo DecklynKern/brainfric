@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
 use crate::ir::*;
 
@@ -10,7 +10,7 @@ struct Memory {
 pub struct Lowerer {
     bf_code: String,
     data_head: usize,
-    register_table: HashMap<Register, Memory>
+    register_table: HashMap<Address, Memory>
 }
 
 impl Lowerer {
@@ -23,7 +23,7 @@ impl Lowerer {
         }
     }
 
-    pub fn jump_to(&mut self, reg: Register) {
+    pub fn jump_to(&mut self, reg: Address) {
 
         let memory = &self.register_table[&reg];
             
@@ -110,6 +110,18 @@ impl Lowerer {
                     self.bf_code.push(']');
 
                 }
+                IRStatement::MoveBool(to, from) => {
+
+                    self.jump_to(from);
+                    self.bf_code.push('[');
+                    
+                    self.jump_to(to);
+                    self.bf_code.push('+');
+
+                    self.jump_to(from);
+                    self.bf_code.push_str("[-]]");
+
+                }
                 IRStatement::ReadByte(reg) => {
                     self.jump_to(reg);
                     self.bf_code.push(',');
@@ -129,9 +141,7 @@ impl Lowerer {
             }
         }
 
-        let mut blank = String::new();
-        std::mem::swap(&mut blank, &mut self.bf_code);
-        blank
+        std::mem::take(&mut self.bf_code)
         
     }
 }

@@ -1,5 +1,6 @@
 #![feature(let_chains)]
 #![feature(if_let_guard)]
+#![feature(box_patterns)]
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -61,7 +62,7 @@ fn main() -> std::io::Result<()> {
 
     args::parse_args();
 
-    let mut file = File::open("bf")?;
+    let mut file = File::open("in.bfrc")?;
 
     let mut code = String::new();
     file.read_to_string(&mut code)?;
