@@ -7,6 +7,7 @@ pub enum DataType {
     Bool,
     Byte,
     Short,
+    Stack(usize),
     Array(Box<DataType>, usize)
 }
 
@@ -18,6 +19,7 @@ impl DataType {
             Self::Bool => 1,
             Self::Byte => 1,
             Self::Short => 2,
+            Self::Stack(len) => *len,
             Self::Array(data_type, len) => data_type.get_size() * len
         }
     }
@@ -69,8 +71,7 @@ impl Expression {
         else if let Token::UnaryOperator(operator) = &tokens[0] {
             Expression::try_parse(&tokens[1..]).map(
                 |expr| match operator {
-                    UnaryOperator::AsBool =>
-                        Self::AsBool(Box::new(expr))
+                    UnaryOperator::AsBool => Self::AsBool(Box::new(expr))
                 }
             )
         }
@@ -85,8 +86,8 @@ impl Expression {
                         BinaryOperator::Equals => Self::Equals(Box::new(expr1), Box::new(expr2)),
                         BinaryOperator::GreaterThan => Self::GreaterThan(Box::new(expr1), Box::new(expr2)),
                         BinaryOperator::LessThan => Self::LessThan(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::And => Self::Equals(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::Or => Self::Equals(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::And => Self::And(Box::new(expr1), Box::new(expr2)),
+                        BinaryOperator::Or => Self::Or(Box::new(expr1), Box::new(expr2)),
                         _ => todo!()
                     }
                 )

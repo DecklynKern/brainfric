@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::args::arg_show_optimization_steps;
+use crate::args::*;
 use crate::ir::*;
 
 impl IRStatement {
@@ -8,7 +8,7 @@ impl IRStatement {
     pub fn uses_reg_value(&self, check_reg: &Address) -> bool {
 
         match self {
-            Self::MoveCell(_, from) | Self::SubCell(_, from) | Self::MoveBool(_, from) => *from == *check_reg,
+            Self::MoveCell(_, from) | Self::SubCell(_, from) => *from == *check_reg,
             Self::WriteByte(reg) | Self::BeginWhile(reg, _) => *reg == *check_reg,
             Self::ReadByte(reg) => *reg == *check_reg, // add compiler flag
             _ => false
@@ -19,7 +19,6 @@ impl IRStatement {
         match self {
             Self::MoveCell(to, from) | Self::SubCell(to, from) =>
                 *from == *check_reg || to.contains(check_reg),
-            Self::MoveBool(to, from) => *to == *check_reg || *from == *check_reg,
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::WriteByte(reg) |
             Self::ReadByte(reg) | Self::BeginWhile(reg, _) | Self::EndWhile(reg) |
             Self::Free(reg) =>
@@ -29,9 +28,9 @@ impl IRStatement {
 
     pub fn delete_reg(&mut self, check_reg: &Address) -> bool {
 
-        let replace_statement = match self {
+        match self {
             Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::Free(reg)
-                => return *reg == *check_reg,
+                => *reg == *check_reg,
             Self::MoveCell(to, from) | Self::SubCell(to, from) => {
                 if *from == *check_reg {
                     panic!("attempted to delete used value")
@@ -45,19 +44,8 @@ impl IRStatement {
                         }
                     }
 
-                    return false;
+                    false
 
-                }
-            }
-            Self::MoveBool(to, from) => {
-                if *from == *check_reg {
-                    panic!("attempted to delete used value")
-                }
-                else if *to == *check_reg {
-                    IRStatement::MoveCell(vec![], *from)
-
-                } else {
-                    return false;
                 }
             }
             Self::WriteByte(reg) | Self::ReadByte(reg) | Self::BeginWhile(reg, _) => {
@@ -65,15 +53,11 @@ impl IRStatement {
                     panic!("attempted to delete used value")
                 }
 
-                return false;
+                false
 
             }
-            Self::EndWhile(_) => return false
-        };
-
-        let _ = std::mem::replace(self, replace_statement);
-        false
-
+            Self::EndWhile(_) => false
+        }
     }
 }
 
@@ -91,7 +75,7 @@ enum OptimizeAction {
 
 pub fn optimize(ir: &mut Vec<IRStatement>) -> u32 {
 
-    let mut passes = 1;
+    let mut passes = 0;
     let mut known_value = HashMap::new();
 
     while optimize_pass(ir, &mut known_value) {
@@ -260,6 +244,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                 known_value.insert(*reg, None);
             }
             IRStatement::BeginWhile(reg, run_once) => {
+
                 if let Some(num) = known_value[reg] && num == 0 {
                     action = OptimizeAction::DeleteWhile(*reg);
                 }
@@ -273,17 +258,14 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                 }
             }
             IRStatement::EndWhile(reg) => {
+                
+                // be more precise about what is being cleared
+                for value in known_value.values_mut() {
+                    let _ = std::mem::replace(value, None);
+                }
+
                 known_value.insert(*reg, Some(0));
-            }
-            IRStatement::MoveBool(to, from) => {
-
-                let old_value = known_value.insert(*from, Some(0));
-
-                match old_value {
-                    Some(Some(val)) => known_value.insert(*to, Some((val != 0) as u8)),
-                    Some(None) => None,
-                    None => panic!()
-                };
+            
             }
         }
 

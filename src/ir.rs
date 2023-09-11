@@ -6,12 +6,21 @@ use crate::parse::*;
 
 pub type Address = usize;
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Pointer {
     Variable(Address),
     Register(Address)
 }
 
-#[derive(Debug)]
+impl Pointer {
+    pub fn get_addr(&self) -> Address {
+        match self {
+            Self::Variable(address) | Self::Register(address) => *address
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum IRStatement {
     Alloc(Address, usize, bool),
     Free(Address),
@@ -21,8 +30,7 @@ pub enum IRStatement {
     WriteByte(Address),
     ReadByte(Address),
     BeginWhile(Address, bool),
-    EndWhile(Address),
-    MoveBool(Address, Address)
+    EndWhile(Address)
 }
 
 pub struct IRGenerator {
@@ -57,33 +65,31 @@ impl IRGenerator {
 
     }
 
-    fn alloc_register(&mut self, data_type: DataType) -> Address {
-        self.alloc(data_type, true)
+    fn alloc_register(&mut self, data_type: DataType) -> Pointer {
+        Pointer::Register(self.alloc(data_type, true))
     }
 
-    fn alloc_named(&mut self, name: String, data_type: DataType) -> Address {
+    fn alloc_named(&mut self, name: String, data_type: DataType) -> Pointer {
         let reg = self.alloc(data_type.clone(), false);
         self.name_table.insert(name, (reg, data_type));
-        reg
+        Pointer::Variable(reg)
     }
 
-    fn try_free(&mut self, reg: Address, is_reg: bool) {
-        
-        if is_reg {
+    fn try_free(&mut self, mem: Pointer) {
 
-            self.do_clear(reg, DataType::Byte);
-            self.ir.push(IRStatement::Free(reg));
-
-            // if reg == self.next_register - 1 {
-            //     self.next_register -= 1;
-            // }
+        match mem {
+            Pointer::Register(address) => {
+                self.do_clear(mem, DataType::Byte);
+                self.ir.push(IRStatement::Free(address));
+            }
+            Pointer::Variable(_) => {}
         }
     }
 
-    fn get_name(&self, name: &String) -> Result<(Address, DataType), BrainFricError> {
+    fn get_name(&self, name: &String) -> Result<(Pointer, DataType), BrainFricError> {
 
-        if let Some(reg) = self.name_table.get(name) {
-            Ok(reg.clone())
+        if let Some((address, data_type)) = self.name_table.get(name) {
+            Ok((Pointer::Variable(*address), data_type.clone()))
         }
         else {
             err!(self.current_line_num, IRError::UnknownIdentifier(name.clone()))
@@ -100,96 +106,130 @@ impl IRGenerator {
 
     }
 
-    fn do_move(&mut self, to: &[Address], from: Address, data_type: DataType) {
+    fn do_move(&mut self, to: &[Pointer], from: Pointer, data_type: DataType) {
         self.ir.push(match data_type {
-            DataType::Byte | DataType::Bool => IRStatement::MoveCell(to.to_vec(), from),
+            DataType::Byte | DataType::Bool => IRStatement::MoveCell(
+                to.iter().map(|ptr| ptr.get_addr()).collect(),
+                from.get_addr()
+            ),
             _ => todo!()
         });
     }
 
-    fn do_move_negative(&mut self, to: &[Address], from: Address, data_type: DataType) {
+    fn do_move_negative(&mut self, to: &[Pointer], from: Pointer, data_type: DataType) {
         self.ir.push(match data_type {
-            DataType::Byte | DataType::Bool => IRStatement::SubCell(to.to_vec(), from),
+            DataType::Byte | DataType::Bool => IRStatement::SubCell(
+                to.iter().map(|ptr| ptr.get_addr()).collect(),
+                from.get_addr()
+            ),
             _ => todo!()
         });
     }
 
-    fn do_copy(&mut self, to: Address, from: Address, data_type: DataType) {
+    fn do_copy(&mut self, to: Pointer, from: Pointer, data_type: DataType) {
         let reg = self.alloc_register(data_type.clone());
         self.do_move(&[reg, to], from, data_type.clone());
         self.do_move(&[from], reg, data_type);
-        self.try_free(reg, true);
+        self.try_free(reg);
     }
 
-    fn do_copy_negative(&mut self, to: Address, from: Address) {
+    fn do_copy_negative(&mut self, to: Pointer, from: Pointer) {
         let reg = self.alloc_register(DataType::Byte);
         self.do_move(&[reg], from, DataType::Byte);
         self.do_move_negative(&[from, to], reg, DataType::Byte);
-        self.try_free(reg, true);
+        self.try_free(reg);
     }
 
-    fn do_move_bool(&mut self, to: Address, from: Address) {
-        self.ir.push(IRStatement::MoveBool(to, from));
-    }
-
-    fn do_clear(&mut self, reg: Address, data_type: DataType) {
+    fn do_clear(&mut self, reg: Pointer, data_type: DataType) {
         self.ir.push(match data_type {
-            DataType::Byte | DataType::Bool => IRStatement::MoveCell(vec![], reg),
+            DataType::Byte | DataType::Bool => IRStatement::MoveCell(vec![], reg.get_addr()),
             _ => todo!()
         });
     }
 
-    fn do_add_const(&mut self, reg: Address, val: u8) {
-        self.ir.push(IRStatement::AddConst(reg, val));
+    fn do_add_const(&mut self, reg: Pointer, val: u8) {
+        self.ir.push(IRStatement::AddConst(reg.get_addr(), val));
     }
 
-    fn do_sub_const(&mut self, reg: Address, val: u8) {
+    fn do_sub_const(&mut self, reg: Pointer, val: u8) {
         self.do_add_const(reg, (256 - val as u16) as u8);
     }
 
-    fn do_write(&mut self, reg: Address) {
-        self.ir.push(IRStatement::WriteByte(reg));
+    fn do_write(&mut self, reg: Pointer) {
+        self.ir.push(IRStatement::WriteByte(reg.get_addr()));
     }
 
-    fn do_read(&mut self, reg: Address) {
-        self.ir.push(IRStatement::ReadByte(reg));
+    fn do_read(&mut self, reg: Pointer) {
+        self.ir.push(IRStatement::ReadByte(reg.get_addr()));
     }
 
-    fn do_while(&mut self, reg: Address) {
-        self.ir.push(IRStatement::BeginWhile(reg, false));
+    fn do_while(&mut self, reg: Pointer) {
+        self.ir.push(IRStatement::BeginWhile(reg.get_addr(), false));
     }
 
-    fn do_if(&mut self, reg: Address) {
-        self.ir.push(IRStatement::BeginWhile(reg, true));
+    fn do_if(&mut self, reg: Pointer) {
+        self.ir.push(IRStatement::BeginWhile(reg.get_addr(), true));
     }
 
-    fn do_end_loop(&mut self, reg: Address) {
-        self.ir.push(IRStatement::EndWhile(reg))
+    fn do_end_loop(&mut self, reg: Pointer) {
+        self.ir.push(IRStatement::EndWhile(reg.get_addr()))
     }
 
-    fn evaluate_bool_expression_into_reg(&mut self, expression: &Expression, into_reg: Address) -> Result<(), BrainFricError> {
+    fn evaluate_bool_expression_into(&mut self, expression: &Expression, into: Pointer) -> Result<(), BrainFricError> {
 
         let got_type = match expression {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
-                self.do_copy(into_reg, var, DataType::Bool);
+                self.do_copy(into, var, DataType::Bool);
                 data_type
             }
             Expression::BoolLiteral(value) => {
-                self.do_add_const(into_reg, *value as u8);
+                self.do_add_const(into, *value as u8);
                 DataType::Bool
             }
             Expression::AsBool(expr) => {
 
-                let (temp_reg1, is_reg) = self.evaluate_expression(expr, &DataType::Byte)?;
-                let temp_reg2 = self.alloc_register(DataType::Byte);
+                let mem1 = self.evaluate_expression(expr, &DataType::Byte)?;
+                let mem2 = self.alloc_register(DataType::Byte);
 
-                self.do_move(&[into_reg, temp_reg2], temp_reg1, DataType::Byte);
-                self.do_move(&[temp_reg1], into_reg, DataType::Byte);
-                self.do_move_bool(into_reg, temp_reg2);
+                self.do_move(&[into, mem2], mem1, DataType::Byte);
+                self.do_move(&[mem1], into, DataType::Byte);
+
+                self.do_if(mem2);
+                self.do_add_const(into, 1);
+                self.do_clear(mem2, DataType::Byte);
+                self.do_end_loop(mem2);
                 
-                self.try_free(temp_reg2, true);
-                self.try_free(temp_reg1, is_reg);
+                self.try_free(mem2);
+                self.try_free(mem1);
+
+                DataType::Bool
+
+            }
+            Expression::And(expr1, expr2) => {
+
+                let mem1 = self.evaluate_expression(expr1, &DataType::Bool)?;
+                let mem2 = self.evaluate_expression(expr2, &DataType::Bool)?;
+
+                self.do_if(mem2);
+                self.do_copy(into, mem1, DataType::Bool);
+                self.do_end_loop(mem2);
+
+                self.try_free(mem2);
+                self.try_free(mem1);
+
+                DataType::Bool
+
+            }
+            Expression::Or(expr1, expr2) => {
+
+                let mem1 = self.evaluate_expression(expr1, &DataType::Bool)?;
+                let mem2 = self.evaluate_expression(expr2, &DataType::Bool)?;
+
+                todo!(); // or is suprisingly obnoxious
+
+                self.try_free(mem2);
+                self.try_free(mem1);
 
                 DataType::Bool
 
@@ -202,36 +242,36 @@ impl IRGenerator {
         Ok(())
     }
 
-    fn evaluate_byte_expression_into_reg(&mut self, expression: &Expression, into_reg: Address, negate: bool) -> Result<(), BrainFricError> {
+    fn evaluate_byte_expression_into(&mut self, expression: &Expression, into: Pointer, negate: bool) -> Result<(), BrainFricError> {
 
         let got_type = match expression {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
                 if negate {
-                    self.do_copy_negative(into_reg, var);
+                    self.do_copy_negative(into, var);
                 }
                 else {
-                    self.do_copy(into_reg, var, DataType::Byte);
+                    self.do_copy(into, var, DataType::Byte);
                 }
                 data_type
             }
             Expression::NumberLiteral(value) => {
                 if negate {
-                    self.do_sub_const(into_reg, *value as u8);
+                    self.do_sub_const(into, *value as u8);
                 }
                 else {
-                    self.do_add_const(into_reg, *value as u8);
+                    self.do_add_const(into, *value as u8);
                 }
                 DataType::Byte
             }
             Expression::Add(expr1, expr2) => {
-                self.evaluate_byte_expression_into_reg(expr1, into_reg, negate)?;
-                self.evaluate_byte_expression_into_reg(expr2, into_reg, negate)?;
+                self.evaluate_byte_expression_into(expr1, into, negate)?;
+                self.evaluate_byte_expression_into(expr2, into, negate)?;
                 DataType::Byte
             }
             Expression::Subtract(expr1, expr2) => {
-                self.evaluate_byte_expression_into_reg(expr1, into_reg, negate)?;
-                self.evaluate_byte_expression_into_reg(expr2, into_reg, !negate)?;
+                self.evaluate_byte_expression_into(expr1, into, negate)?;
+                self.evaluate_byte_expression_into(expr2, into, !negate)?;
                 DataType::Byte
             }
             _ => todo!()
@@ -243,29 +283,29 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_expression_into_reg(&mut self, expression: &Expression, expected_type: &DataType, into_reg: Address) -> Result<(), BrainFricError> {
+    fn evaluate_expression_into(&mut self, expression: &Expression, expected_type: &DataType, into: Pointer) -> Result<(), BrainFricError> {
 
         match expected_type {
             DataType::Bool =>
-                self.evaluate_bool_expression_into_reg(expression, into_reg),
+                self.evaluate_bool_expression_into(expression, into),
             DataType::Byte =>
-                self.evaluate_byte_expression_into_reg(expression, into_reg, false),
+                self.evaluate_byte_expression_into(expression, into, false),
             _ => todo!()
         }
     }
 
-    fn evaluate_expression(&mut self, expression: &Expression, expected_type: &DataType) -> Result<(Address, bool), BrainFricError> {
+    fn evaluate_expression(&mut self, expression: &Expression, expected_type: &DataType) -> Result<Pointer, BrainFricError> {
         
         Ok(match expression {
             Expression::Identifier(name) => {
                 let (reg, data_type) = self.get_name(name)?;
                 self.assert_data_type(expected_type, &data_type)?;
-                (reg, false)
+                reg
             }
             _ => {
                 let reg = self.alloc_register(expected_type.clone());
-                self.evaluate_expression_into_reg(expression, expected_type, reg)?;
-                (reg, true)
+                self.evaluate_expression_into(expression, expected_type, reg)?;
+                reg
             }
         })
     }
@@ -287,7 +327,7 @@ impl IRGenerator {
                     let (var, data_type) = self.get_name(&name)?;
 
                     self.do_clear(var, data_type.clone());
-                    self.evaluate_expression_into_reg(&expression, &data_type.clone(), var)?;
+                    self.evaluate_expression_into(&expression, &data_type.clone(), var)?;
 
                 }
                 StatementBody::Inc(name) => {
@@ -314,14 +354,14 @@ impl IRGenerator {
                             val = chr as u8;
                         }
 
-                        self.try_free(reg, true);
+                        self.try_free(reg);
                         continue;
                     
                     }
 
-                    let (reg, is_reg) = self.evaluate_expression(&expression, &DataType::Byte)?;
-                    self.do_write(reg);
-                    self.try_free(reg, is_reg);
+                    let pointer = self.evaluate_expression(&expression, &DataType::Byte)?;
+                    self.do_write(pointer);
+                    self.try_free(pointer);
 
                 }
                 StatementBody::Read(name) => {
@@ -345,13 +385,13 @@ impl IRGenerator {
 
                     }
 
-                    let (reg1, is_reg1) = self.evaluate_expression(&expression, &DataType::Bool)?;
+                    let reg1 = self.evaluate_expression(&expression, &DataType::Bool)?;
                     self.do_while(reg1);
 
                     let loop_ir = self.generate_ir(loop_statements)?;
                     self.ir.extend(loop_ir);
 
-                    let (reg2, is_reg2) = self.evaluate_expression(&expression, &DataType::Bool)?;
+                    let reg2 = self.evaluate_expression(&expression, &DataType::Bool)?;
 
                     if reg1 != reg2 {
                         self.do_move(&[reg1], reg2, DataType::Bool);
@@ -359,14 +399,14 @@ impl IRGenerator {
 
                     self.do_end_loop(reg1);
 
-                    self.try_free(reg2, is_reg2);
-                    self.try_free(reg1, is_reg1);
+                    self.try_free(reg2);
+                    self.try_free(reg1);
 
                 }
                 StatementBody::If(expression, loop_statements) => {
 
                     let reg = self.alloc_register(DataType::Bool);
-                    self.evaluate_bool_expression_into_reg(&expression, reg)?;
+                    self.evaluate_bool_expression_into(&expression, reg)?;
                     self.do_if(reg);
 
                     let loop_ir = self.generate_ir(loop_statements)?;
@@ -375,7 +415,7 @@ impl IRGenerator {
                     self.do_clear(reg, DataType::Bool);
                     self.do_end_loop(reg);
 
-                    self.try_free(reg, true);
+                    self.try_free(reg);
 
                 }
             }

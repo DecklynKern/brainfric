@@ -1,37 +1,36 @@
-pub static mut DO_OPTIMIZATION: bool = true;
-pub static mut PRINT_OPTIMIZATION_STEPS: bool = false;
+macro_rules! create_flags {
+    ($($flag_name: ident, $flag_arg: literal, $flag_func_name: ident, $negate: literal),*) => {
 
-macro_rules! parse_arg {
-    ($var: ident, $flag: literal, $args: ident) => {
-        $var = $args.contains(&String::from($flag));
+        $(static mut $flag_name: bool = $negate;)*
+
+        pub fn parse_args() {
+
+            let args: Vec<_> = std::env::args().collect();
+
+            unsafe {
+                $(
+                    $flag_name = $negate ^ args.contains(&String::from($flag_arg));
+                )*
+            }
+        }
+
+        $(
+            pub fn $flag_func_name() -> bool {
+                unsafe {
+                    $flag_name
+                }
+            }
+        )*
     };
 }
 
-macro_rules! parse_arg_neg {
-    ($var: ident, $flag: literal, $args: ident) => {
-        parse_arg!($var, $flag, $args);
-        $var = !$var;
-    };
-}
-
-pub fn parse_args() {
-
-    let args: Vec<_> = std::env::args().collect();
-
-    unsafe {
-        parse_arg_neg!(DO_OPTIMIZATION, "-noopt", args);
-        parse_arg!(PRINT_OPTIMIZATION_STEPS, "-printopt", args);
-    }
-}
-
-pub fn arg_do_optimization() -> bool {
-    unsafe {
-        DO_OPTIMIZATION
-    }
-}
-
-pub fn arg_show_optimization_steps() -> bool {
-    unsafe {
-        PRINT_OPTIMIZATION_STEPS
-    }
-}
+create_flags!(
+    SHOW_LEX, "-showlex", arg_show_lex, false,
+    SHOW_PARSE, "-showparse", arg_show_parse, false,
+    SHOW_IR, "-showir", arg_show_ir, false,
+    DO_OPTIMIZATION, "-doopt", arg_do_optimization, true,
+    SHOW_OPTIMIZATION_STEPS, "-showoptsteps", arg_show_optimization_steps, false,
+    SHOW_OPTIMIZATION, "-showopt", arg_show_optimization, false,
+    SHOW_LOWERED, "-showlowered", arg_show_lowered, false,
+    SHOW_CLEANED, "-showcleaned", arg_show_cleaned, false
+);

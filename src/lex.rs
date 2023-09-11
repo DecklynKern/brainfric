@@ -6,6 +6,7 @@ pub enum Type {
     Bool,
     Byte,
     Short,
+    Stack,
     Array,
 }
 
@@ -16,6 +17,7 @@ impl Type {
             "bool" => Self::Bool,
             "byte" => Self::Byte,
             "short" => Self::Short,
+            "stack" => Self::Stack,
             "array" => Self::Array,
             _ => return None
         }))
@@ -165,7 +167,7 @@ enum TokenInitialChar {
     None
 }
 
-pub fn lex(code: &String) -> Result<Vec<Vec<Token>>, BrainFricError> {
+pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
     code.split("\n").enumerate().map(lex_line).into_iter().collect()
 }
 

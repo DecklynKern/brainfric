@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Write};
+use std::collections::HashMap;
 
 use crate::ir::*;
 
@@ -108,18 +108,6 @@ impl Lowerer {
 
                     self.jump_to(from);
                     self.bf_code.push(']');
-
-                }
-                IRStatement::MoveBool(to, from) => {
-
-                    self.jump_to(from);
-                    self.bf_code.push('[');
-                    
-                    self.jump_to(to);
-                    self.bf_code.push('+');
-
-                    self.jump_to(from);
-                    self.bf_code.push_str("[-]]");
 
                 }
                 IRStatement::ReadByte(reg) => {
