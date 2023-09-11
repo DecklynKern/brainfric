@@ -171,7 +171,7 @@ pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
     code.split("\n").enumerate().map(lex_line).into_iter().collect()
 }
 
-fn lex_line<'a>((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
+fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
 
     let mut chars: Vec<char> = line.chars().rev().collect();
     chars.insert(0, ' ');
