@@ -1,12 +1,8 @@
-bool a
-bool b
+byte a
+byte b
 bool c
-byte t
 
-read t
-a <- ?t
+read a
+read b
 
-read t
-b <- ?t
-
-c <- a & b
+c <- ?a | ?b

@@ -1,6 +1,8 @@
 use crate::error::*;
 use crate::err;
 
+use std::rc::Rc;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Type {
     Bool,
@@ -61,7 +63,7 @@ impl Keyword {
 pub enum Literal {
     Bool(bool),
     Number(usize),
-    String(String)
+    String(Rc<str>)
 }
 
 impl Literal {
@@ -99,7 +101,8 @@ impl Separator {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum UnaryOperator {
-    AsBool
+    AsBool,
+    Not
 }
 
 impl UnaryOperator {
@@ -108,6 +111,7 @@ impl UnaryOperator {
 
         Some(Token::UnaryOperator(match token.as_str() {
             "?" => Self::AsBool,
+            "!" => Self::Not,
             _ => return None
         }))
     }
@@ -215,7 +219,7 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
             }
         }
         else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
-            tokens.push(Token::Literal(Literal::String(current_token[1..].to_string())));
+            tokens.push(Token::Literal(Literal::String(current_token[1..].into())));
             current_token.clear();
             current_token_initial_char = TokenInitialChar::None;
             continue;

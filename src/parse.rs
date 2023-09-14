@@ -2,6 +2,10 @@ use crate::error::*;
 use crate::err;
 use crate::lex::*;
 
+use std::rc::Rc;
+use std::iter::Peekable;
+use std::slice::Iter;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataType {
     Bool,
@@ -32,7 +36,7 @@ pub enum Expression {
     Identifier(Name),
     BoolLiteral(bool),
     NumberLiteral(usize),
-    StringLiteral(String),
+    StringLiteral(Rc<str>),
     Equals(Box<Expression>, Box<Expression>),
     LessThan(Box<Expression>, Box<Expression>),
     GreaterThan(Box<Expression>, Box<Expression>),
@@ -46,56 +50,116 @@ pub enum Expression {
 
 impl Expression {
 
-    fn try_parse(tokens: &[Token]) -> Option<Self> {
+            //     if tokens.is_empty() {
 
-        if tokens.is_empty() {
-            None
-        }
-        else if tokens.len() == 1 {
-            if let Token::Identifier(name) = &tokens[0] {
-                Some(Self::Identifier(name.clone()))
-            }
-            else if let Token::Literal(Literal::Bool(val)) = tokens[0] {
-                Some(Self::BoolLiteral(val))
-            }
-            else if let Token::Literal(Literal::Number(val)) = tokens[0] {
-                Some(Self::NumberLiteral(val))
-            }
-            else if let Token::Literal(Literal::String(val)) = &tokens[0] {
-                Some(Self::StringLiteral(val.clone()))
+        //         Some(match token {
+        //             Token::Identifier(name) => Self::Identifier(name.clone()),
+        //             Token::Literal(Literal::Bool(val)) => Self::BoolLiteral(*val),
+        //             Token::Literal(Literal::Number(val)) => Self::NumberLiteral(*val),
+        //             Token::Literal(Literal::String(val)) => Self::StringLiteral(val.clone()),
+        //             _ => return None
+        //         })
 
-            } else {
-                None
-            }
-        }
-        else if let Token::UnaryOperator(operator) = &tokens[0] {
-            Expression::try_parse(&tokens[1..]).map(
-                |expr| match operator {
-                    UnaryOperator::AsBool => Self::AsBool(Box::new(expr))
+        //     } else {
+
+        //         match token {
+        //             Token::Separator(Separator::OpenParen) => {
+
+        //                 let mut depth = 1;
+                        
+        //                 Expression::try_parse(&mut tokens.take_while(|token| match token {
+        //                     _ => {
+        //                         depth -= 1;
+        //                         true
+        //                     }
+        //                 }).collect::<Iter<Token>>())
+
+        //             }
+
+
+        //             _ => None
+
+        //         }
+        //     }
+        // })
+
+        // // else if tokens[0] == Token::Separator(Separator::OpenParen) {
+            
+        // //     let mut depth = 1;
+        // //     let mut idx = 1;
+
+        // //     while depth > 0 && idx < tokens.len() {
+
+        // //         match tokens[idx] {
+        // //             Token::Separator(Separator::OpenParen) => depth += 1,
+        // //             Token::Separator(Separator::CloseParen) => depth -= 1,
+        // //             _ => {}
+        // //         }
+
+        // //         idx += 1;
+
+        // //     }
+
+        // //     if depth != 0 {
+        // //         return None;
+        // //     }
+
+        // //     Expression::try_parse(&tokens[1..idx])
+
+        // // }
+        // // else if tokens.len() == 2 {
+        // //     if let Token::UnaryOperator(operator) = &tokens[0] {
+        // //         Expression::try_parse(&tokens[1..]).map(
+        // //             |expr| match operator {
+        // //                 UnaryOperator::AsBool => Self::AsBool,
+        // //                 UnaryOperator::Not => Self::Not
+        // //             }(Box::new(expr))
+        // //         )
+        // //     } else {
+        // //         None
+        // //     }
+        // // }
+        // // else if let Token::BinaryOperator(operator) = &tokens[1] {
+
+        // //     // TODO: actual binary operator parsing that doesn't suck
+        // //     Expression::try_parse(&tokens[0..1]).and_then(
+        // //         |expr1| Expression::try_parse(&tokens[2..]).map(
+        // //             |expr2| match operator {
+        // //                 BinaryOperator::Plus => Self::Add,
+        // //                 BinaryOperator::Minus => Self::Subtract,
+        // //                 BinaryOperator::Equals => Self::Equals,
+        // //                 BinaryOperator::GreaterThan => Self::GreaterThan,
+        // //                 BinaryOperator::LessThan => Self::LessThan,
+        // //                 BinaryOperator::And => Self::And,
+        // //                 BinaryOperator::Or => Self::Or,
+        // //                 _ => todo!()
+        // //             }(Box::new(expr1), Box::new(expr2))
+        // //         )
+        // //     )
+        // // }
+
+    fn try_parse_factor(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+
+        None
+
+    }
+
+    fn try_parse_term(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+        Expression::try_parse_factor(tokens)
+    }
+
+    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+
+        tokens.peek().and_then(|token| {
+
+            match token {
+                Token::UnaryOperator(op) => {
+
                 }
-            )
-        }
-        else if let Token::BinaryOperator(operator) = &tokens[1] {
+            }
 
-            // TODO: actual binary operator parsing that doesn't suck
-            Expression::try_parse(&tokens[0..1]).and_then(
-                |expr1| Expression::try_parse(&tokens[2..]).map(
-                    |expr2| match operator {
-                        BinaryOperator::Plus => Self::Add(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::Minus => Self::Subtract(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::Equals => Self::Equals(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::GreaterThan => Self::GreaterThan(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::LessThan => Self::LessThan(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::And => Self::And(Box::new(expr1), Box::new(expr2)),
-                        BinaryOperator::Or => Self::Or(Box::new(expr1), Box::new(expr2)),
-                        _ => todo!()
-                    }
-                )
-            )
-        }
-        else {
-            None
-        }
+        })
+
     }
 
     fn uses_variable(&self, variable: &Name) -> bool {
@@ -146,7 +210,7 @@ impl std::fmt::Debug for Statement {
 
 fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<Token>, current_line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
 
-    if let Some(expression) = Expression::try_parse(&current_line[1..]) {
+    Expression::try_parse(&mut current_line[1..].iter().peekable()).map(|expression| {
 
         let mut loop_lines = Vec::new();
         let mut loop_depth = 1;
@@ -172,10 +236,8 @@ fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<
         loop_lines.pop();
         Ok((expression, parse(loop_lines, current_line_num)?))
 
-    }
-    else {
-        err!(current_line_num, ParseError::InvalidExpression);
-    }
+    }).unwrap_or_else(|| err!(current_line_num, ParseError::InvalidExpression))
+
 }
 
 pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<Statement>, BrainFricError> {
@@ -212,7 +274,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
                 }
             }
             Token::Identifier(name) if Token::BinaryOperator(BinaryOperator::SetTo) == line[1] => {
-                if let Some(expression) = Expression::try_parse(&line[2..]) {
+                if let Some(expression) = Expression::try_parse(&mut line[2..].iter().peekable()) {
                     StatementBody::SetTo(name.clone(), expression)
                 }
                 else {
@@ -236,7 +298,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
                 }
             }
             Token::Keyword(Keyword::Write) => {
-                if let Some(expression) = Expression::try_parse(&line[1..]) {
+                if let Some(expression) = Expression::try_parse(&mut line[1..].iter().peekable()) {
                     StatementBody::Write(expression)
                 }
                 else {
