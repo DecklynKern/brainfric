@@ -140,26 +140,48 @@ impl Expression {
 
     fn try_parse_factor(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
-        None
+        tokens.next().and_then(|token| {
 
+            match token {
+                Token::Identifier(name) => Some(Self::Identifier(name.clone())),
+                Token::Literal(Literal::Bool(val)) => Some(Self::BoolLiteral(*val)),
+                Token::Literal(Literal::Number(val)) => Some(Self::NumberLiteral(*val)),
+                Token::Literal(Literal::String(val)) => Some(Self::StringLiteral(val.clone())),
+                Token::Separator(Separator::OpenParen) => {
+
+                    Expression::try_parse(tokens).and_then(|expr| {
+
+                        tokens.next().and_then(|next_token| match next_token {
+                            Token::Separator(Separator::CloseParen) => Some(expr),
+                            _ => None
+                        })  
+                    })
+                }
+                _ => None
+            }
+        })
     }
 
     fn try_parse_term(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
-        Expression::try_parse_factor(tokens)
-    }
-
-    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
         tokens.peek().and_then(|token| {
-
             match token {
                 Token::UnaryOperator(op) => {
 
+                    tokens.next();
+
+                    Expression::try_parse_term(tokens).and_then(|expr| Some(match op {
+                        UnaryOperator::AsBool => Self::AsBool,
+                        UnaryOperator::Not => Self::Not
+                    }(Box::new(expr))))
                 }
+                _ => Expression::try_parse_factor(tokens)
             }
-
         })
+    }
 
+    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+        Expression::try_parse_term(tokens)
     }
 
     fn uses_variable(&self, variable: &Name) -> bool {
