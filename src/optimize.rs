@@ -3,82 +3,24 @@ use std::collections::HashMap;
 use crate::args::*;
 use crate::ir::*;
 
-impl IRStatement {
-
-    pub fn uses_reg_value(&self, check_reg: &Address) -> bool {
-
-        match self {
-            Self::MoveCell(_, from) | Self::SubCell(_, from) => *from == *check_reg,
-            Self::WriteByte(reg) | Self::BeginWhile(reg, _) => *reg == *check_reg,
-            Self::ReadByte(reg) => *reg == *check_reg, // add compiler flag
-            _ => false
-        }
-    }
-
-    pub fn references_reg(&self, check_reg: &Address) -> bool {
-        match self {
-            Self::MoveCell(to, from) | Self::SubCell(to, from) =>
-                *from == *check_reg || to.contains(check_reg),
-            Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::WriteByte(reg) |
-            Self::ReadByte(reg) | Self::BeginWhile(reg, _) | Self::EndWhile(reg) |
-            Self::Free(reg) =>
-                *reg == *check_reg
-        }
-    }
-
-    pub fn delete_reg(&mut self, check_reg: &Address) -> bool {
-
-        match self {
-            Self::Alloc(reg, _, _) | Self::AddConst(reg, _) | Self::Free(reg)
-                => *reg == *check_reg,
-            Self::MoveCell(to, from) | Self::SubCell(to, from) => {
-                if *from == *check_reg {
-                    panic!("attempted to delete used value")
-                }
-                else {
-
-                    for idx in 0..to.len() {
-                        if to[idx] == *check_reg {
-                            to.remove(idx);
-                            break;
-                        }
-                    }
-
-                    false
-
-                }
-            }
-            Self::WriteByte(reg) | Self::ReadByte(reg) | Self::BeginWhile(reg, _) => {
-                if *reg == *check_reg {
-                    panic!("attempted to delete used value")
-                }
-
-                false
-
-            }
-            Self::EndWhile(_) => false
-        }
-    }
-}
-
 #[derive(Debug)]
 enum OptimizeAction {
     DeleteReg(Address),
     DeleteStatement,
     ReplaceStatement(Vec<IRStatement>),
-    DeleteWhile(Address),
-    DeleteIfEnds(Address),
+    GuaranteeBranch,
     CombineAdd(u8, usize),
     CombinePrevMove(usize, Address, Vec<Address>),
+    DoLoopOptimization,
     None
 }
 
-pub fn optimize(ir: &mut Vec<IRStatement>) -> u32 {
+pub fn optimize(ir: &mut IRBlock) -> u32 {
 
     let mut passes = 0;
     let mut known_value = HashMap::new();
 
-    while optimize_pass(ir, &mut known_value) {
+    while optimize_pass(&mut ir.0, &mut known_value) {
 
         passes += 1;
         known_value.clear();
@@ -88,7 +30,7 @@ pub fn optimize(ir: &mut Vec<IRStatement>) -> u32 {
         }
 
         println!("\n=== OPTIMIZER PASS #{passes} ===");
-        for ir_statement in ir.iter() {
+        for ir_statement in ir.0.iter() {
             println!("{ir_statement:?}");
         }
     }
@@ -122,11 +64,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                             IRStatement::Free(reg2) => if reg == reg2 {
                                 break;
                             }
-                            IRStatement::BeginWhile(_, _) | IRStatement::EndWhile(_) => {
-                                delete = false;
-                                break;
-                            }
-                            _ => if ir_statement.uses_reg_value(reg) {
+                            _ => if ir_statement.uses_address_value(*reg) {
                                 delete = false;
                                 break;
                             }
@@ -148,15 +86,14 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                     
                     for check_idx in (statement_idx + 1)..ir.len() {
 
-                        if let IRStatement::BeginWhile(_, _) = ir[check_idx] {
-                            break;
+                        if let IRStatement::While(_, _, _) = &ir[check_idx] {
+
+                            if ir[check_idx].references_address(*reg) {
+                                break;
+                            }
                         }
 
-                        if let IRStatement::EndWhile(_) = ir[check_idx] {
-                            break;
-                        }
-
-                        if !ir[check_idx].references_reg(reg) {
+                        if !ir[check_idx].references_address(*reg) {
                             continue;
                         }
 
@@ -201,14 +138,6 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
 
                     for check_idx in (0..statement_idx).rev() {
 
-                        if let IRStatement::BeginWhile(_, _) = ir[check_idx] {
-                            break;
-                        }
-
-                        if let IRStatement::EndWhile(_) = ir[check_idx] {
-                            break;
-                        }
-
                         if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
 
                             if to2.contains(from) && !to.contains(from2) {
@@ -220,7 +149,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                             }
                         }
 
-                        if ir[check_idx].references_reg(from) {
+                        if ir[check_idx].references_address(*from) {
                             break;
                         }
                     }
@@ -243,29 +172,19 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
             IRStatement::ReadByte(reg) => {
                 known_value.insert(*reg, None);
             }
-            IRStatement::BeginWhile(reg, run_once) => {
+            IRStatement::While(reg, _, run_once) => {
 
-                if let Some(num) = known_value[reg] && num == 0 {
-                    action = OptimizeAction::DeleteWhile(*reg);
-                }
-                else if let Some(num) = known_value[reg] && num != 0 && *run_once {
-                    action = OptimizeAction::DeleteIfEnds(*reg);
-                }
-                else if !run_once {
-                    for val in known_value.values_mut() {
-                        *val = None;
+                action = if *run_once {
+
+                    match known_value[reg] {
+                        Some(0) => OptimizeAction::DeleteStatement,
+                        Some(_) => OptimizeAction::GuaranteeBranch,
+                        None => OptimizeAction::DoLoopOptimization
                     }
                 }
-            }
-            IRStatement::EndWhile(reg) => {
-                
-                // be more precise about what is being cleared
-                for value in known_value.values_mut() {
-                    let _ = std::mem::replace(value, None);
+                else {
+                    OptimizeAction::DoLoopOptimization
                 }
-
-                known_value.insert(*reg, Some(0));
-            
             }
         }
 
@@ -278,7 +197,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
 
                 while check_idx < ir.len() {
 
-                    if ir[check_idx].delete_reg(&reg) {
+                    if ir[check_idx].delete_address(reg) {
                         ir.remove(check_idx);
                     }
                     else {
@@ -289,39 +208,41 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
             OptimizeAction::DeleteStatement => {
                 ir.remove(statement_idx);
             }
-            OptimizeAction::DeleteWhile(while_reg) => {
+            OptimizeAction::GuaranteeBranch => {
 
-                while !ir.is_empty() {
+                if let IRStatement::While(_, mut block, true) = ir.remove(statement_idx) {
 
-                    match ir[statement_idx] {
-                        IRStatement::EndWhile(reg) => if reg == while_reg {
-                            break;
-                        }
-                        _ => {}
+                    while let Some(statement) = block.0.pop() {
+                        ir.insert(statement_idx + 1, statement);
                     }
 
-                    ir.remove(statement_idx);
-
+                } else {
+                    panic!("guarantee branch error");
                 }
-
-                ir.remove(statement_idx);
 
             }
-            OptimizeAction::DeleteIfEnds(if_reg) => {
+            OptimizeAction::DoLoopOptimization => {
 
-                for idx in ((statement_idx + 1)..ir.len()).rev() {
+                if let IRStatement::While(reg, block, true)= &mut ir[statement_idx] {
 
-                    match ir[idx] {
-                        IRStatement::EndWhile(reg) => if reg == if_reg {
-                            ir.remove(idx);
-                            break;
-                        }
-                        _ => {}
+                    let used_addresses = block.get_used_addresses();
+
+                    for address in &used_addresses {
+                        known_value.insert(*address, None);
                     }
+                    
+                    did_action = optimize_pass(&mut block.0, known_value);
+                    
+                    for address in &used_addresses {
+                        known_value.insert(*address, None);
+                    }
+
+                    known_value.insert(*reg, Some(0));
+
                 }
-
-                ir.remove(statement_idx);
-
+                else {
+                    panic!("loop optimization error")
+                }
             }
             OptimizeAction::CombineAdd(num, idx) => {
 
@@ -366,7 +287,6 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                     }
 
                     to.extend(replace_regs);
-
                     ir.remove(statement_idx);
 
                 }
@@ -384,13 +304,15 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
             }
             OptimizeAction::None => {
                 did_action = false;
-                statement_idx += 1
             }
         }
-
+        
         if did_action {
             return true;
         }
+        
+        statement_idx += 1;
+
     }
 
     false

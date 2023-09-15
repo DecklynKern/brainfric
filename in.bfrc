@@ -5,4 +5,5 @@ bool c
 read a
 read b
 
-c <- ?a | ?b
+c <- ?(a + 1) & ?(b + 1)
+// c becomes 2????

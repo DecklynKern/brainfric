@@ -41,7 +41,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
     if args::arg_show_ir() {
         println!("=== IR PASS ===");
-        for ir_statement in &ir {
+        for ir_statement in &ir.0 {
             println!("{ir_statement:?}");
         }
         println!();
@@ -53,7 +53,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
 
         if args::arg_show_optimization() {
             println!("=== FINAL OPTIMIZER PASS ({passes} PASSES) ===");
-            for ir_statement in &ir {
+            for ir_statement in &ir.0 {
                 println!("{ir_statement:?}");
             }
             println!()
@@ -61,7 +61,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
     }
 
     let mut lowerer = lower::Lowerer::new();
-    let mut bf_code = lowerer.lower(ir);
+    let mut bf_code = lowerer.lower(ir.0);
 
     if args::arg_show_lowered() {
         println!("=== LOWERING PASS ===");

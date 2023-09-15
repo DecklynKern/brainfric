@@ -1,10 +1,10 @@
-use crate::error::*;
-use crate::err;
-use crate::lex::*;
-
 use std::rc::Rc;
 use std::iter::Peekable;
 use std::slice::Iter;
+
+use crate::error::*;
+use crate::err;
+use crate::lex::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataType {
@@ -50,94 +50,6 @@ pub enum Expression {
 
 impl Expression {
 
-            //     if tokens.is_empty() {
-
-        //         Some(match token {
-        //             Token::Identifier(name) => Self::Identifier(name.clone()),
-        //             Token::Literal(Literal::Bool(val)) => Self::BoolLiteral(*val),
-        //             Token::Literal(Literal::Number(val)) => Self::NumberLiteral(*val),
-        //             Token::Literal(Literal::String(val)) => Self::StringLiteral(val.clone()),
-        //             _ => return None
-        //         })
-
-        //     } else {
-
-        //         match token {
-        //             Token::Separator(Separator::OpenParen) => {
-
-        //                 let mut depth = 1;
-                        
-        //                 Expression::try_parse(&mut tokens.take_while(|token| match token {
-        //                     _ => {
-        //                         depth -= 1;
-        //                         true
-        //                     }
-        //                 }).collect::<Iter<Token>>())
-
-        //             }
-
-
-        //             _ => None
-
-        //         }
-        //     }
-        // })
-
-        // // else if tokens[0] == Token::Separator(Separator::OpenParen) {
-            
-        // //     let mut depth = 1;
-        // //     let mut idx = 1;
-
-        // //     while depth > 0 && idx < tokens.len() {
-
-        // //         match tokens[idx] {
-        // //             Token::Separator(Separator::OpenParen) => depth += 1,
-        // //             Token::Separator(Separator::CloseParen) => depth -= 1,
-        // //             _ => {}
-        // //         }
-
-        // //         idx += 1;
-
-        // //     }
-
-        // //     if depth != 0 {
-        // //         return None;
-        // //     }
-
-        // //     Expression::try_parse(&tokens[1..idx])
-
-        // // }
-        // // else if tokens.len() == 2 {
-        // //     if let Token::UnaryOperator(operator) = &tokens[0] {
-        // //         Expression::try_parse(&tokens[1..]).map(
-        // //             |expr| match operator {
-        // //                 UnaryOperator::AsBool => Self::AsBool,
-        // //                 UnaryOperator::Not => Self::Not
-        // //             }(Box::new(expr))
-        // //         )
-        // //     } else {
-        // //         None
-        // //     }
-        // // }
-        // // else if let Token::BinaryOperator(operator) = &tokens[1] {
-
-        // //     // TODO: actual binary operator parsing that doesn't suck
-        // //     Expression::try_parse(&tokens[0..1]).and_then(
-        // //         |expr1| Expression::try_parse(&tokens[2..]).map(
-        // //             |expr2| match operator {
-        // //                 BinaryOperator::Plus => Self::Add,
-        // //                 BinaryOperator::Minus => Self::Subtract,
-        // //                 BinaryOperator::Equals => Self::Equals,
-        // //                 BinaryOperator::GreaterThan => Self::GreaterThan,
-        // //                 BinaryOperator::LessThan => Self::LessThan,
-        // //                 BinaryOperator::And => Self::And,
-        // //                 BinaryOperator::Or => Self::Or,
-        // //                 _ => todo!()
-        // //             }(Box::new(expr1), Box::new(expr2))
-        // //         )
-        // //     )
-        // // }
-
     fn try_parse_factor(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
         tokens.next().and_then(|token| {
@@ -164,34 +76,52 @@ impl Expression {
 
     fn try_parse_term(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
-        tokens.peek().and_then(|token| {
-            match token {
-                Token::UnaryOperator(op) => {
-
-                    tokens.next();
-
-                    Expression::try_parse_term(tokens).and_then(|expr| Some(match op {
-                        UnaryOperator::AsBool => Self::AsBool,
-                        UnaryOperator::Not => Self::Not
-                    }(Box::new(expr))))
+        match tokens.peek() {
+            Some(token) => {
+                match token {
+                    Token::UnaryOperator(op) => {
+    
+                        tokens.next();
+    
+                        Expression::try_parse_term(tokens).map(|term| match op {
+                            UnaryOperator::AsBool => Self::AsBool,
+                            UnaryOperator::Not => Self::Not
+                        }(Box::new(term)))
+                    }
+                    _ => Expression::try_parse_factor(tokens)
                 }
-                _ => Expression::try_parse_factor(tokens)
             }
-        })
+            None => None
+        }
     }
 
     fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
-        Expression::try_parse_term(tokens)
-    }
 
-    fn uses_variable(&self, variable: &Name) -> bool {
-        
-        match self {
-            Self::Identifier(name) => *name == *variable,
-            Self::Equals(expr1, expr2) | Self::LessThan(expr1, expr2) | Self::GreaterThan(expr1, expr2) | Self::Add(expr1, expr2) | Self::Subtract(expr1, expr2) =>
-                expr1.uses_variable(variable) || expr2.uses_variable(variable),
-            _ => false
-        }
+        Expression::try_parse_term(tokens).and_then(|term1| {
+
+            match tokens.peek() {
+                Some(Token::BinaryOperator(op)) => {
+
+                    tokens.next();
+
+                    Expression::try_parse_term(tokens).and_then(|term2| {
+                        
+                        Some(match op {
+                            BinaryOperator::Equals => Self::Equals,
+                            BinaryOperator::LessThan => Self::LessThan,
+                            BinaryOperator::GreaterThan => Self::GreaterThan,
+                            BinaryOperator::Plus => Self::Add,
+                            BinaryOperator::Minus => Self::Subtract,
+                            BinaryOperator::And => Self::And,
+                            BinaryOperator::Or => Self::Or,
+                            _ => {return None;}
+                        }(Box::new(term1), Box::new(term2)))
+                    })
+                }
+                Some(_) => None,
+                None => Some(term1)
+            }
+        })
     }
 }
 
@@ -205,17 +135,6 @@ pub enum StatementBody {
     Read(Name),
     While(Expression, Vec<Statement>),
     If(Expression, Vec<Statement>)
-}
-
-impl StatementBody {
-
-    pub fn uses_variable(&self, variable: &Name) -> bool {
-
-        match self {
-            Self::Write(expression) => expression.uses_variable(variable),
-            _ => false
-        }
-    }
 }
 
 #[derive(PartialEq, Eq)]

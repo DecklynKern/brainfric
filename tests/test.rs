@@ -42,10 +42,10 @@ macro_rules! statements {
 
 macro_rules! ir_statements {
     () => {
-        vec![
+        ir::IRBlock(vec![
             ir::IRStatement::Alloc(0, 1, false),
             ir::IRStatement::AddConst(0, 240)
-        ]
+        ])
     };
 }
 
@@ -91,7 +91,7 @@ fn basic_lower_check() {
     let mut lowerer = lower::Lowerer::new();
 
     assert_eq!(
-        lowerer.lower(ir_statements!()),
+        lowerer.lower(ir_statements!().0),
         bf_code!()
     )
 }
