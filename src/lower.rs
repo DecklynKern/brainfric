@@ -27,12 +27,18 @@ impl Lowerer {
 
     pub fn jump_to(&mut self, reg: Address) {
 
-        let memory = &self.register_table[&reg];
-            
-        let diff = memory.address as isize - self.data_head as isize;
-        self.data_head = memory.address;
+        let memory_address = self.register_table[&reg].address;
 
-        self.bf_code.push_str((if diff > 0 {">"} else {"<"}).repeat(diff.abs()))
+        self.bf_code.push_str(&(
+            if memory_address > self.data_head {
+                ">"
+            }
+            else {
+                "<"
+            }
+        ).repeat(memory_address.abs_diff(self.data_head)));
+        
+        self.data_head = memory_address;
         
     }
 
