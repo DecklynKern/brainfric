@@ -36,7 +36,7 @@ impl Lowerer {
             else {
                 "<"
             }
-        ).repeat(memory_address.abs_diff(self.data_head));
+        .repeat(memory_address.abs_diff(self.data_head)));
         
         self.data_head = memory_address;
         
@@ -71,10 +71,10 @@ impl Lowerer {
 
                     self.bf_code.push_str(&
                         if num > 127 {
-                            "-".repeat(256 - num as u16)
+                            "-".repeat(256 - num as usize)
                         }
                         else {
-                            "+".repeat(num)
+                            "+".repeat(num as usize)
                         }
                     );
                 }
