@@ -114,6 +114,7 @@ impl Lowerer {
                     self.jump_to(reg);
                     self.bf_code.push('[');
                     self.lower_statements(block.0);
+                    self.jump_to(reg);
                     self.bf_code.push(']');
                 }
             }
