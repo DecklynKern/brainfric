@@ -17,7 +17,7 @@ mod optimize;
 mod lower;
 mod clean;
 
-fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
+fn compile(code: &String) -> Result<String, BrainFricError> {
 
     let tokenized = lex::lex(code)?;
 
@@ -56,7 +56,7 @@ fn perform_compilation(code: &String) -> Result<String, BrainFricError> {
             for ir_statement in &ir.0 {
                 println!("{ir_statement:?}");
             }
-            println!()
+            println!();
         }
     }
 
@@ -88,7 +88,7 @@ fn main() -> std::io::Result<()> {
     let mut code = String::new();
     file.read_to_string(&mut code)?;
 
-    let compiled = match perform_compilation(&code) {
+    let compiled = match compile(&code) {
         Ok(compiled) => compiled,
         Err(err) => {
             err.print();
