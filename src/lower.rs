@@ -32,16 +32,8 @@ impl Lowerer {
         let diff = memory.address as isize - self.data_head as isize;
         self.data_head = memory.address;
 
-        if diff < 0 {
-            for _ in 0..-diff {
-                self.bf_code.push('<');
-            }
-        }
-        else {
-            for _ in 0..diff {
-                self.bf_code.push('>');
-            }
-        }
+        self.bf_code.push_str((if diff > 0 {">"} else {"<"}).repeat(diff.abs()))
+        
     }
 
     fn lower_statements(&mut self, ir: Vec<IRStatement>) {
