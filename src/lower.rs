@@ -29,14 +29,14 @@ impl Lowerer {
 
         let memory_address = self.register_table[&reg].address;
 
-        self.bf_code.push_str(&(
+        self.bf_code.push_str(&
             if memory_address > self.data_head {
                 ">"
             }
             else {
                 "<"
             }
-        ).repeat(memory_address.abs_diff(self.data_head)));
+        ).repeat(memory_address.abs_diff(self.data_head));
         
         self.data_head = memory_address;
         
@@ -69,16 +69,14 @@ impl Lowerer {
                     
                     self.jump_to(reg);
 
-                    if num > 127 {
-                        for _ in 0..(256 - num as u16) {
-                            self.bf_code.push('-');
+                    self.bf_code.push_str(&
+                        if num > 127 {
+                            "-".repeat(256 - num as u16)
                         }
-                    }
-                    else {
-                        for _ in 0..num {
-                            self.bf_code.push('+');
+                        else {
+                            "+".repeat(num)
                         }
-                    }
+                    );
                 }
                 IRStatement::MoveCell(to, from) => {
 
