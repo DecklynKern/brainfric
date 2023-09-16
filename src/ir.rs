@@ -69,8 +69,8 @@ pub enum IRStatement {
     Alloc(Address, usize, bool),
     Free(Address),
     AddConst(Address, u8),
-    MoveCell(Vec<Address>, Address),
-    SubCell(Vec<Address>, Address),
+    MoveCell(Box<[Address]>, Address),
+    SubCell(Box<[Address]>, Address),
     WriteByte(Address),
     ReadByte(Address),
     While(Address, IRBlock, bool)
@@ -129,12 +129,13 @@ impl IRStatement {
                 }
                 else {
 
-                    for idx in 0..to.len() {
-                        if to[idx] == delete_address {
-                            to.remove(idx);
-                            break;
-                        }
-                    }
+                    let _ = mem::replace(
+                        to,
+                        to.iter()
+                            .cloned()
+                            .filter(|reg| *reg != delete_address)
+                            .collect::<Box<_>>()
+                    );
 
                     false
 
@@ -268,7 +269,7 @@ impl IRGenerator {
     }
 
     fn do_clear(&mut self, mem: Pointer) {
-        self.ir.0.push(IRStatement::MoveCell(vec![], mem.get_addr()));
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem.get_addr()));
     }
 
     fn do_add_const(&mut self, mem: Pointer, val: u8) {
@@ -332,7 +333,14 @@ impl IRGenerator {
                 let reg = self.alloc_register();
                 self.evaluate_bool_expression_into(expr, reg)?;
 
-                
+                self.do_add_const(into, 1);
+
+                self.do_begin_loop();
+                self.do_sub_const(reg, 1);
+                self.do_sub_const(into, 1);
+                self.do_end_loop(reg, true);
+
+                self.try_free(reg);
 
                 DataType::Bool
 
@@ -348,7 +356,7 @@ impl IRGenerator {
 
                 self.do_begin_loop();
                 self.do_copy(into, mem1);
-                self.do_clear(reg);
+                self.do_sub_const(reg, 1);
                 self.do_end_loop(reg, true);
 
                 self.try_free(reg);

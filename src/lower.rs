@@ -83,8 +83,8 @@ impl Lowerer {
                     self.jump_to(from);
                     self.bf_code.push_str("[-");
 
-                    for reg in to {
-                        self.jump_to(reg);
+                    for reg in to.iter() {
+                        self.jump_to(*reg);
                         self.bf_code.push('+');
                     }
 
@@ -97,8 +97,8 @@ impl Lowerer {
                     self.jump_to(from);
                     self.bf_code.push_str("[-");
 
-                    for reg in to {
-                        self.jump_to(reg);
+                    for reg in to.iter() {
+                        self.jump_to(*reg);
                         self.bf_code.push('-');
                     }
 

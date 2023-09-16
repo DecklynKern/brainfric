@@ -1,9 +1,6 @@
 byte a
-byte b
 bool c
 
 read a
-read b
 
-c <- ?(a + 1) & ?(b + 1)
-// c becomes 2????
+c <- !?(a - 113)
