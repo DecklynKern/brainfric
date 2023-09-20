@@ -71,7 +71,7 @@ impl Lowerer {
 
                     self.bf_code.push_str(&
                         if num > 127 {
-                            "-".repeat(256 - num as usize)
+                            "-".repeat(num.wrapping_neg() as usize)
                         }
                         else {
                             "+".repeat(num as usize)
@@ -83,23 +83,9 @@ impl Lowerer {
                     self.jump_to(from);
                     self.bf_code.push_str("[-");
 
-                    for reg in to.iter() {
+                    for (reg, negate) in to.iter() {
                         self.jump_to(*reg);
-                        self.bf_code.push('+');
-                    }
-
-                    self.jump_to(from);
-                    self.bf_code.push(']');
-
-                }
-                IRStatement::SubCell(to, from) => {
-
-                    self.jump_to(from);
-                    self.bf_code.push_str("[-");
-
-                    for reg in to.iter() {
-                        self.jump_to(*reg);
-                        self.bf_code.push('-');
+                        self.bf_code.push(if *negate {'-'} else {'+'});
                     }
 
                     self.jump_to(from);

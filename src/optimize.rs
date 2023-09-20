@@ -11,7 +11,7 @@ enum OptimizeAction {
     ReplaceStatement(Box<[IRStatement]>),
     GuaranteeBranch,
     CombineAdd(u8, usize),
-    CombinePrevMove(usize, Address, Box<[Address]>),
+    CombinePrevMove(usize, Address, Box<[(Address, bool)]>),
     DoLoopOptimization,
     None
 }
@@ -127,18 +127,21 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                         OptimizeAction::DeleteStatement
                     }
                     else {
+
+                        let negated = num.wrapping_neg();
     
                         OptimizeAction::ReplaceStatement(
                             to.into_iter()
-                                .map(|reg| IRStatement::AddConst(*reg, num))
-                                .chain([IRStatement::AddConst(*from, (256 - num as u16) as u8)])
+                                .map(|(reg, negate)| 
+                                    IRStatement::AddConst(*reg, if *negate {negated} else {num}))
+                                .chain([IRStatement::AddConst(*from, negated)])
                                 .collect()
                         )
                     };
                 }
                 else  {
 
-                    for reg in to.iter() {
+                    for (reg, negate) in to.iter() {
                         known_value.insert(*reg, None);
                     }
                     
@@ -148,7 +151,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
 
                         if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
 
-                            if to2.contains(from) && !to.contains(from2) {
+                            if to2.contains(&(*from, true)) && !to.iter().any(|(reg, _)| reg == from2) {
                                 action = OptimizeAction::CombinePrevMove(check_idx, *from, to.clone());
                             }
 
@@ -161,26 +164,6 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                             break;
                         }
                     }
-                }
-            }
-            IRStatement::SubCell(to, from) => {
-
-                if let Some(num) = known_value[from]  {
-
-                    // technically the second branch handles both
-                    // but this creates a lot less redundant passes
-                    action = if num == 0 {
-                        OptimizeAction::DeleteStatement
-                    }
-                    else {
-    
-                        OptimizeAction::ReplaceStatement(
-                            to.into_iter()
-                                .map(|reg| IRStatement::AddConst(*reg, (256 - num as u16) as u8))
-                                .chain([IRStatement::AddConst(*from, num)])
-                                .collect()
-                        )
-                    };
                 }
             }
             IRStatement::WriteByte(_) => {},
@@ -238,7 +221,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
             }
             OptimizeAction::DoLoopOptimization => {
 
-                if let IRStatement::While(reg, block, true)= &mut ir[statement_idx] {
+                if let IRStatement::While(reg, block, _) = &mut ir[statement_idx] {
 
                     let used_addresses = block.get_used_addresses();
 
@@ -260,22 +243,23 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                 }
             }
             OptimizeAction::CombineAdd(num, idx) => {
-
-                let statement = &mut ir[idx];
-
-                let mut insert = Vec::new();
                 
-                match statement {
-                    IRStatement::AddConst(_, num2) => *num2 = num2.overflowing_add(num).0,
-                    IRStatement::MoveCell(to,  _) => {
-                        for reg in to.iter() {
-                            insert.insert(0, IRStatement::AddConst(*reg, num));
-                        }
+                for item in match &mut ir[idx] {
+                    IRStatement::AddConst(_, num2) => {
+                        *num2 = num2.overflowing_add(num).0;
+                        vec![]
                     }
-                    _ => todo!()
-                }
+                    IRStatement::MoveCell(to,  _) => {
 
-                for item in insert {
+                        let negated = num.wrapping_neg();
+
+                        to.iter()
+                            .rev()
+                            .map(|(reg, negate)| IRStatement::AddConst(*reg, if *negate {negated} else {num}))
+                            .collect()
+                    }
+                    _ => panic!("combine add error")
+                } {
                     ir.insert(idx + 1, item);
                 }
 
@@ -290,7 +274,7 @@ fn optimize_pass(ir: &mut Vec<IRStatement>, known_value: &mut HashMap<usize, Opt
                         to,
                         to.iter()
                             .cloned()
-                            .filter(|addr| *addr != reg)
+                            .filter(|(addr, _)| *addr != reg)
                             .chain(replace_regs.iter().cloned())
                             .collect::<Box<_>>()
                     );

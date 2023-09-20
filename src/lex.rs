@@ -127,6 +127,7 @@ pub enum BinaryOperator {
     GreaterThan,
     Plus,
     Minus,
+    Times,
 
     And,
     Or
@@ -144,6 +145,7 @@ impl BinaryOperator {
             ">" => Self::GreaterThan,
             "+" => Self::Plus,
             "-" => Self::Minus,
+            "*" => Self::Times,
             "&" => Self::And,
             "|" => Self::Or,
             _ => return None

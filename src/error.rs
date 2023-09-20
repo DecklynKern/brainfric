@@ -40,7 +40,8 @@ impl ErrorDesc for ParseError {
 
 pub enum IRError {
     UnknownIdentifier(String),
-    TypeMismatch(DataType, DataType)
+    TypeMismatch(DataType, DataType),
+    ExpectedTypedExpression(DataType)
 }
 
 impl ErrorDesc for IRError {
@@ -50,7 +51,9 @@ impl ErrorDesc for IRError {
             Self::UnknownIdentifier(identifier) =>
                 format!("Unknown identifier \"{identifier}\""),
             Self::TypeMismatch(expected_type, got_type) =>  
-                format!("Type mismatch. Expected {:?}, got {:?}", expected_type, got_type)
+                format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
+            Self::ExpectedTypedExpression(expected_type) =>
+                format!("Expected {expected_type:?} expression")
         })
     }
 }

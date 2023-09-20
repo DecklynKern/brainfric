@@ -69,8 +69,7 @@ pub enum IRStatement {
     Alloc(Address, usize, bool),
     Free(Address),
     AddConst(Address, u8),
-    MoveCell(Box<[Address]>, Address),
-    SubCell(Box<[Address]>, Address),
+    MoveCell(Box<[(Address, bool)]>, Address),
     WriteByte(Address),
     ReadByte(Address),
     While(Address, IRBlock, bool)
@@ -84,8 +83,8 @@ impl IRStatement {
             Self::Alloc(address, _, _) | Self::Free(address) | Self::AddConst(address, _) | Self::WriteByte(address) | Self::ReadByte(address)  => {
                 HashSet::from([*address])
             },
-            Self::MoveCell(to, from) | Self::SubCell(to, from) => {
-                let mut addresses = HashSet::from_iter(to.iter().cloned());
+            Self::MoveCell(to, from) => {
+                let mut addresses = HashSet::from_iter(to.iter().map(|cell| cell.0));
                 addresses.insert(*from);
                 addresses
             }
@@ -100,7 +99,7 @@ impl IRStatement {
     pub fn uses_address_value(&self, check_address: Address) -> bool {
 
         match self {
-            Self::MoveCell(_, from) | Self::SubCell(_, from) => *from == check_address,
+            Self::MoveCell(_, from)  => *from == check_address,
             Self::WriteByte(address) | Self::ReadByte(address) => *address == check_address, // add compiler flag?
             Self::While(address, block, _) => *address == check_address || block.uses_address_value(check_address),
             Self::Alloc(_, _, _) | Self::AddConst(_, _) | Self::Free(_) => false
@@ -109,8 +108,8 @@ impl IRStatement {
 
     pub fn references_address(&self, check_address: Address) -> bool {
         match self {
-            Self::MoveCell(to, from) | Self::SubCell(to, from) =>
-                *from == check_address || to.contains(&check_address),
+            Self::MoveCell(to, from) =>
+                *from == check_address || to.iter().any(|cell| cell.0 == check_address),
             Self::Alloc(address, _, _) | Self::AddConst(address, _) | Self::WriteByte(address) |
             Self::ReadByte(address) | Self::Free(address) =>
                 *address == check_address,
@@ -123,7 +122,7 @@ impl IRStatement {
         match self {
             Self::Alloc(address, _, _) | Self::AddConst(address, _) | Self::Free(address)
                 => *address == delete_address,
-            Self::MoveCell(to, from) | Self::SubCell(to, from) => {
+            Self::MoveCell(to, from) => {
                 if *from == delete_address {
                     panic!("attempted to delete used value")
                 }
@@ -133,7 +132,7 @@ impl IRStatement {
                         to,
                         to.iter()
                             .cloned()
-                            .filter(|reg| *reg != delete_address)
+                            .filter(|reg| reg.0 != delete_address)
                             .collect::<Box<_>>()
                     );
 
@@ -242,16 +241,25 @@ impl IRGenerator {
 
     fn do_move(&mut self, to: &[Pointer], from: Pointer) {
         self.ir.0.push(IRStatement::MoveCell(
-            to.iter().map(|ptr| ptr.get_addr()).collect(),
+            to.iter().map(|ptr| (ptr.get_addr(), false)).collect(),
             from.get_addr()
         ));
     }
 
     fn do_move_negative(&mut self, to: &[Pointer], from: Pointer) {
-        self.ir.0.push(IRStatement::SubCell(
-            to.iter().map(|ptr| ptr.get_addr()).collect(),
+        self.ir.0.push(IRStatement::MoveCell(
+            to.iter().map(|ptr| (ptr.get_addr(), true)).collect(),
             from.get_addr()
         ));
+    }
+
+    fn do_move_raw(&mut self, to: &[(Pointer, bool)], from: Pointer) {
+        self.ir.0.push(IRStatement::MoveCell(
+            to.iter()
+                .map(|(mem, negate)| (mem.get_addr(), *negate))
+                .collect(),
+            from.get_addr())
+        )
     }
 
     fn do_copy(&mut self, to: Pointer, from: Pointer) {
@@ -277,7 +285,7 @@ impl IRGenerator {
     }
 
     fn do_sub_const(&mut self, mem: Pointer, val: u8) {
-        self.do_add_const(mem, (256 - val as u16) as u8);
+        self.do_add_const(mem, val.wrapping_neg());
     }
 
     fn do_write(&mut self, mem: Pointer) {
@@ -303,11 +311,10 @@ impl IRGenerator {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
                 self.do_copy(into, var);
-                data_type
+                self.assert_data_type(&DataType::Bool, &data_type)?;
             }
             Expression::BoolLiteral(value) => {
                 self.do_add_const(into, *value as u8);
-                DataType::Bool
             }
             Expression::AsBool(expr) => {
 
@@ -325,8 +332,6 @@ impl IRGenerator {
                 self.try_free(reg);
                 self.try_free(mem);
 
-                DataType::Bool
-
             }
             Expression::Not(expr) => {
 
@@ -341,8 +346,6 @@ impl IRGenerator {
                 self.do_end_loop(reg, true);
 
                 self.try_free(reg);
-
-                DataType::Bool
 
             }
             Expression::And(expr1, expr2) => {
@@ -363,8 +366,6 @@ impl IRGenerator {
                 self.try_free(mem2);
                 self.try_free(mem1);
 
-                DataType::Bool
-
             }
             Expression::Or(expr1, expr2) => {
 
@@ -384,20 +385,17 @@ impl IRGenerator {
                 self.try_free(mem2);
                 self.try_free(mem1);
 
-                DataType::Bool
-
             }
-            _ => todo!()
+            _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Bool))
         };
 
-        self.assert_data_type(&DataType::Bool, &got_type)?;
-
         Ok(())
+
     }
 
     fn evaluate_byte_expression_into(&mut self, expression: &Expression, into: Pointer, negate: bool) -> Result<(), BrainFricError> {
 
-        let got_type = match expression {
+        match expression {
             Expression::Identifier(name) => {
                 let (var, data_type) = self.get_name(&name)?;
                 if negate {
@@ -406,7 +404,7 @@ impl IRGenerator {
                 else {
                     self.do_copy(into, var);
                 }
-                data_type
+                self.assert_data_type(&DataType::Byte, &data_type)?;
             }
             Expression::NumberLiteral(value) => {
                 if negate {
@@ -415,22 +413,45 @@ impl IRGenerator {
                 else {
                     self.do_add_const(into, *value as u8);
                 }
-                DataType::Byte
             }
             Expression::Add(expr1, expr2) => {
                 self.evaluate_byte_expression_into(expr1, into, negate)?;
                 self.evaluate_byte_expression_into(expr2, into, negate)?;
-                DataType::Byte
             }
             Expression::Subtract(expr1, expr2) => {
                 self.evaluate_byte_expression_into(expr1, into, negate)?;
                 self.evaluate_byte_expression_into(expr2, into, !negate)?;
-                DataType::Byte
             }
-            _ => todo!()
-        };
+            Expression::Multiply(expr1, expr2) => {
 
-        self.assert_data_type(&DataType::Byte, &got_type)?;
+                let reg1 = self.alloc_register();
+                self.evaluate_byte_expression_into(expr1, reg1, false)?;
+
+                let reg2 = self.alloc_register();
+                self.evaluate_byte_expression_into(expr2, reg2, false)?;
+
+                let reg3 = self.alloc_register();
+
+                self.do_begin_loop();
+
+                if negate {
+                }
+                else {
+                    self.do_move(&[into, reg3], reg1);
+                }
+
+                self.do_move(&[reg1], reg3);
+
+                self.do_sub_const(reg2, 1);
+                self.do_end_loop(reg2, false);
+
+                self.try_free(reg3);
+                self.try_free(reg2);
+                self.try_free(reg1);
+
+            }
+            _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Byte))
+        };
 
         Ok(())
 

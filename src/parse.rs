@@ -45,6 +45,7 @@ pub enum Expression {
     Or(Box<Expression>, Box<Expression>),
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
+    Multiply(Box<Expression>, Box<Expression>),
     AsBool(Box<Expression>)
 }
 
@@ -88,7 +89,26 @@ impl Expression {
                             UnaryOperator::Not => Self::Not
                         }(Box::new(term)))
                     }
-                    _ => Expression::try_parse_factor(tokens)
+                    _ => {
+                        
+                        Expression::try_parse_factor(tokens).and_then(|factor1| {
+
+                            match tokens.peek() {
+                                Some(Token::BinaryOperator(BinaryOperator::Times)) => {
+                                    
+                                    tokens.next();
+
+                                    Expression::try_parse_factor(tokens).and_then(|factor2|
+                                        Some(Self::Multiply(
+                                            Box::new(factor1),
+                                            Box::new(factor2)
+                                        ))
+                                    )
+                                }
+                                _ => Some(factor1)
+                            }
+                        })
+                    }
                 }
             }
             None => None
