@@ -64,7 +64,10 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
         IRStatement::Free(_) => {}
         IRStatement::AddConst(id, num) => {
 
-            if *num != 0 {
+            if *num == 0 {
+                return OptimizeActionStage1::DeleteStatement;
+            }
+            else {
 
                 for (check_idx, check_statement) in ir.iter().enumerate().skip(statement_idx + 1) {
 
@@ -290,7 +293,6 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
 #[derive(Debug)]
 enum OptimizeActionStage2 {
     DeleteIdentifier(Identifier),
-    DeleteStatement,
     SwapPrevious,
     None
 }
@@ -324,12 +326,9 @@ fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> Optimiz
                 }
             }
         }
-        IRStatement::AddConst(id1, num) => {
-
-            if num == 0 {
-                return OptimizeActionStage2::DeleteStatement;
-            }
-            else if statement_idx != 0 && let IRStatement::AddConst(id2, _) = ir[statement_idx - 1] {
+        IRStatement::AddConst(id1, _) => {
+            
+            if statement_idx != 0 && let IRStatement::AddConst(id2, _) = ir[statement_idx - 1] {
 
                 // bubble sort by a different means
                 if id1 < id2 {
@@ -368,9 +367,6 @@ fn optimize_pass_stage2(ir: &mut Vec<IRStatement>) -> bool {
                     }
                 }
             }
-            OptimizeActionStage2::DeleteStatement => {
-                ir.remove(statement_idx);
-            },
             OptimizeActionStage2::SwapPrevious => ir.swap(statement_idx - 1, statement_idx),
             OptimizeActionStage2::None => did_action = false,
         }
