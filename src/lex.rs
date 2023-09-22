@@ -267,7 +267,7 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
             else if chr == '"' {
                 TokenInitialChar::Quote
             }
-            else if chr == ' ' {
+            else if chr.is_whitespace() {
                 TokenInitialChar::None
             }
             else {
