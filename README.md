@@ -22,10 +22,12 @@ Here are some examples:
 * `a <- b`
 * `a <- b + c`
 * `x <- false`
+* `x <- ?(#x + b)`
 
 ## Expressions
 The following operations are allowed in expressions:
 * `+` `-` `*` with their usual interpretations on byte variables
+* `(` `)` with their usual interpretations
 * `&` `|` `!` with their usual interpretations as AND OR and NOT on bool variables
 * `#` which converts a bool to a byte (either 0 or 1)
 * `?` which converts a byte to a bool (0 becomes false and anything else becomes true)
