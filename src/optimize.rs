@@ -293,7 +293,7 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
 #[derive(Debug)]
 enum OptimizeActionStage2 {
     DeleteIdentifier(Identifier),
-    SwapPrevAddConst,
+    SwapPrevious,
     None
 }
 
@@ -332,7 +332,7 @@ fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> Optimiz
 
                 // bubble sort by a different means
                 if id1 < id2 {
-                    return OptimizeActionStage2::SwapPrevAddConst;
+                    return OptimizeActionStage2::SwapPrevious;
                 }
             }
         }
@@ -367,7 +367,7 @@ fn optimize_pass_stage2(ir: &mut Vec<IRStatement>) -> bool {
                     }
                 }
             }
-            OptimizeActionStage2::SwapPrevAddConst => ir.swap(statement_idx - 1, statement_idx),
+            OptimizeActionStage2::SwapPrevious => ir.swap(statement_idx - 1, statement_idx),
             OptimizeActionStage2::None => did_action = false,
         }
         
