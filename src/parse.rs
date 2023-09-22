@@ -33,20 +33,27 @@ pub type Name = String;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
+
     Identifier(Name),
     BoolLiteral(bool),
     NumberLiteral(usize),
     StringLiteral(Rc<str>),
+
     Equals(Box<Expression>, Box<Expression>),
     LessThan(Box<Expression>, Box<Expression>),
     GreaterThan(Box<Expression>, Box<Expression>),
+
     Not(Box<Expression>),
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
+
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
-    AsBool(Box<Expression>)
+
+    AsBool(Box<Expression>),
+    AsNum(Box<Expression>)
+
 }
 
 impl Expression {
@@ -78,14 +85,17 @@ impl Expression {
     fn try_parse_term(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
         match tokens.peek() {
+            
             Some(token) => {
                 match token {
+
                     Token::UnaryOperator(op) => {
     
                         tokens.next();
     
                         Expression::try_parse_term(tokens).map(|term| match op {
                             UnaryOperator::AsBool => Self::AsBool,
+                            UnaryOperator::AsNum => Self::AsNum,
                             UnaryOperator::Not => Self::Not
                         }(Box::new(term)))
                     }

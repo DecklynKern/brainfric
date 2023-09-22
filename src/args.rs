@@ -25,12 +25,13 @@ macro_rules! create_flags {
 }
 
 create_flags!(
-    SHOW_LEX, "-showlex", arg_show_lex, false,
-    SHOW_PARSE, "-showparse", arg_show_parse, false,
-    SHOW_IR, "-showir", arg_show_ir, false,
-    DO_OPTIMIZATION, "-doopt", arg_do_optimization, true,
-    SHOW_OPTIMIZATION_STEPS, "-showoptsteps", arg_show_optimization_steps, false,
-    SHOW_OPTIMIZATION, "-showopt", arg_show_optimization, false,
-    SHOW_LOWERED, "-showlowered", arg_show_lowered, false,
-    SHOW_CLEANED, "-showcleaned", arg_show_cleaned, false
+    DO_OPTIMIZATION,            "-doopt",           arg_do_optimization,            true,
+    ALLOW_DELETE_VARIABLES,     "-allowdelvars",    arg_allow_delete_variables,     false,
+    SHOW_LEX,                   "-showlex",         arg_show_lex,                   false,
+    SHOW_PARSE,                 "-showparse",       arg_show_parse,                 false,
+    SHOW_IR,                    "-showir",          arg_show_ir,                    false,
+    SHOW_OPTIMIZATION_STEPS,    "-showoptsteps",    arg_show_optimization_steps,    false,
+    SHOW_OPTIMIZATION,          "-showopt",         arg_show_optimization,          false,
+    SHOW_LOWERED,               "-showlower",       arg_show_lowered,               false,
+    SHOW_CLEANED,               "-showclean",       arg_show_cleaned,               false
 );

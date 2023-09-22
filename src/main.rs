@@ -52,11 +52,18 @@ fn compile(code: &String) -> Result<String, BrainFricError> {
         let passes = optimize::optimize(&mut ir);
 
         if args::arg_show_optimization() {
-            println!("=== FINAL OPTIMIZER PASS ({passes} PASSES) ===");
+
+            println!(
+                "=== FINAL OPTIMIZER PASS ({} STAGE 1 PASSES, {} STAGE 2 PASSES) ===",
+                passes[0],
+                passes[1]
+            );
+
             for ir_statement in &ir.0 {
                 println!("{ir_statement:?}");
             }
             println!();
+
         }
     }
 

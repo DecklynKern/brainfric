@@ -89,6 +89,7 @@ pub enum Separator {
 impl Separator {
     
     fn try_parse(token: &String) -> Option<Token> {
+
         Some(Token::Separator(match token.as_str() {
             "(" => Self::OpenParen,
             ")" => Self::CloseParen,
@@ -102,6 +103,7 @@ impl Separator {
 #[derive(Debug, PartialEq, Eq)]
 pub enum UnaryOperator {
     AsBool,
+    AsNum,
     Not
 }
 
@@ -111,6 +113,7 @@ impl UnaryOperator {
 
         Some(Token::UnaryOperator(match token.as_str() {
             "?" => Self::AsBool,
+            "#" => Self::AsNum,
             "!" => Self::Not,
             _ => return None
         }))
@@ -131,7 +134,7 @@ pub enum BinaryOperator {
 
     And,
     Or
-
+    
 }
 
 impl BinaryOperator {

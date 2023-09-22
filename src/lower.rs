@@ -11,7 +11,7 @@ pub struct Lowerer {
     bf_code: String,
     data_head: usize,
     stack_pointer: usize,
-    register_table: HashMap<Address, Memory>
+    identifier_table: HashMap<Identifier, Memory>
 }
 
 impl Lowerer {
@@ -21,13 +21,13 @@ impl Lowerer {
             bf_code: String::new(),
             data_head: 0,
             stack_pointer: 0,
-            register_table: HashMap::new()
+            identifier_table: HashMap::new()
         }
     }
 
-    pub fn jump_to(&mut self, reg: Address) {
+    pub fn jump_to(&mut self, id: Identifier) {
 
-        let memory_address = self.register_table[&reg].address;
+        let memory_address = self.identifier_table[&id].address;
 
         self.bf_code.push_str(&
             if memory_address > self.data_head {
@@ -47,9 +47,10 @@ impl Lowerer {
         for ir_statement in ir {
             
             match ir_statement {
-                IRStatement::Alloc(reg, size, _) => {
 
-                    self.register_table.insert(reg, Memory {
+                IRStatement::Alloc(mem, size) => {
+
+                    self.identifier_table.insert(mem.get_identifier(), Memory {
                         address: self.stack_pointer,
                         size
                     });
@@ -59,7 +60,7 @@ impl Lowerer {
                 }
                 IRStatement::Free(reg) => {
 
-                    let memory = &self.register_table[&reg];
+                    let memory = &self.identifier_table[&reg];
                         
                     if self.stack_pointer - memory.size == memory.address {
                         self.stack_pointer -= memory.size;

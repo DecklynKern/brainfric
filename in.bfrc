@@ -1,8 +1,5 @@
-byte a
+bool a
 byte b
-byte c
 
-a <- 2
-b <- 3
-
-c <- 20 - a * b
+a <- true
+b <- #a
