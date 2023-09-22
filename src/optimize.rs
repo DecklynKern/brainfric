@@ -326,7 +326,7 @@ fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> Optimiz
         }
         IRStatement::AddConst(id1, num) => {
 
-            if *num == 0 {
+            if num == 0 {
                 return OptimizeActionStage2::DeleteStatement;
             }
             else if statement_idx != 0 && let IRStatement::AddConst(id2, _) = ir[statement_idx - 1] {
@@ -368,7 +368,9 @@ fn optimize_pass_stage2(ir: &mut Vec<IRStatement>) -> bool {
                     }
                 }
             }
-            OptimizeActionStage2::DeleteStatement => let _ = ir.remove(statement_idx),
+            OptimizeActionStage2::DeleteStatement => {
+                ir.remove(statement_idx);
+            },
             OptimizeActionStage2::SwapPrevious => ir.swap(statement_idx - 1, statement_idx),
             OptimizeActionStage2::None => did_action = false,
         }
