@@ -4,6 +4,7 @@ use std::mem;
 use crate::args::arg_allow_delete_variables;
 use crate::error::*;
 use crate::err;
+use crate::lex::Name;
 use crate::parse::*;
 
 pub type Identifier = usize;
@@ -67,8 +68,8 @@ impl IRBlock {
 
 impl std::fmt::Debug for IRBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let err = self.0.iter().map(|statement| {write!(f, "\n  ")?; statement.fmt(f)}).collect();
-        write!(f, "\n")?;
+        let err = self.0.iter().try_for_each(|statement| {write!(f, "\n  ")?; statement.fmt(f)});
+        writeln!(f)?;
         err
     }
 }
@@ -181,25 +182,29 @@ impl IRStatement {
     }
 }
 
-pub struct IRGenerator {
+pub fn generate_ir(statements: Vec<Statement>) -> Result<IRBlock, BrainFricError> {
+
+    let mut ir_generator = IRGenerator {
+        loop_stack: Vec::new(),
+        ir: IRBlock::new(),
+        current_line_num: 0,
+        next_identifier: 0,
+        name_table: HashMap::new()
+    };
+
+    ir_generator.generate_ir(statements)
+    
+}
+
+struct IRGenerator {
     ir: IRBlock,
     loop_stack: Vec<IRBlock>,
     current_line_num: usize,
     next_identifier: Identifier,
-    name_table: HashMap<String, (Identifier, DataType)>
+    name_table: HashMap<Name, (Identifier, DataType)>
 }
 
 impl IRGenerator {
-
-    pub fn new() -> Self {
-        Self {
-            loop_stack: Vec::new(),
-            ir: IRBlock::new(),
-            current_line_num: 0,
-            next_identifier: 0,
-            name_table: HashMap::new()
-        }
-    }
 
     fn allocate(&mut self, data_type: DataType, can_delete: bool) -> Identifier {
         
@@ -219,7 +224,7 @@ impl IRGenerator {
         Memory::Temporary(self.allocate(DataType::Byte, true))
     }
 
-    fn allocate_variable(&mut self, name: String, data_type: DataType) -> Memory {
+    fn allocate_variable(&mut self, name: Name, data_type: DataType) -> Memory {
         let temp = self.allocate(data_type.clone(), arg_allow_delete_variables());
         self.name_table.insert(name, (temp, data_type));
         Memory::Variable(temp)
@@ -236,9 +241,9 @@ impl IRGenerator {
         }
     }
 
-    fn get_name(&self, name: &String) -> Result<(Memory, DataType), BrainFricError> {
+    fn get_name(&self, name: &Name) -> Result<(Memory, DataType), BrainFricError> {
 
-        if let Some((id, data_type)) = self.name_table.get(name) {
+        if let Some((id, data_type)) = self.name_table.get(name.as_ref()) {
             Ok((Memory::Variable(*id), data_type.clone()))
         }
         else {
@@ -318,7 +323,7 @@ impl IRGenerator {
     }
 
     fn do_end_loop(&mut self, mem: Memory, is_if: bool) {
-        mem::swap(&mut self.ir, &mut self.loop_stack.last_mut().unwrap());
+        mem::swap(&mut self.ir, self.loop_stack.last_mut().unwrap());
         self.ir.0.push(IRStatement::While(mem.get_identifier(), self.loop_stack.pop().unwrap(), is_if));
     }
 
@@ -327,7 +332,7 @@ impl IRGenerator {
         match expression {
 
             Expression::Identifier(name) => {
-                let (var, data_type) = self.get_name(&name)?;
+                let (var, data_type) = self.get_name(name)?;
                 self.do_copy(into, var);
                 self.assert_data_type(&DataType::Bool, &data_type)?;
             }
@@ -417,7 +422,7 @@ impl IRGenerator {
 
             Expression::Identifier(name) => {
 
-                let (var, data_type) = self.get_name(&name)?;
+                let (var, data_type) = self.get_name(name)?;
 
                 if negate {
                     self.do_copy_negative(into, var);

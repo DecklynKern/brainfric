@@ -2,12 +2,26 @@ use std::collections::HashMap;
 
 use crate::ir::*;
 
+pub fn lower(ir: Vec<IRStatement>) -> String {
+    
+    let mut lowerer = Lowerer {
+        bf_code: String::new(),
+        data_head: 0,
+        stack_pointer: 0,
+        identifier_table: HashMap::new()
+    };
+
+    lowerer.lower_statements(ir);
+    std::mem::take(&mut lowerer.bf_code)
+
+}
+
 struct Memory {
     address: usize,
     size: usize
 }
 
-pub struct Lowerer {
+struct Lowerer {
     bf_code: String,
     data_head: usize,
     stack_pointer: usize,
@@ -16,16 +30,7 @@ pub struct Lowerer {
 
 impl Lowerer {
 
-    pub fn new() -> Self {
-        Self {
-            bf_code: String::new(),
-            data_head: 0,
-            stack_pointer: 0,
-            identifier_table: HashMap::new()
-        }
-    }
-
-    pub fn jump_to(&mut self, id: Identifier) {
+    fn jump_to(&mut self, id: Identifier) {
 
         let memory_address = self.identifier_table[&id].address;
 
@@ -110,10 +115,5 @@ impl Lowerer {
                 }
             }
         }
-    }
-
-    pub fn lower(&mut self, ir: Vec<IRStatement>) -> String {
-        self.lower_statements(ir);
-        std::mem::take(&mut self.bf_code)
     }
 }

@@ -54,7 +54,7 @@ enum OptimizeActionStage1 {
     None
 }
 
-fn find_optimization_stage1(ir: &Vec<IRStatement>, statement_idx: usize, known_values: &mut HashMap<usize, Option<u8>>) -> OptimizeActionStage1 {
+fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_values: &mut HashMap<usize, Option<u8>>) -> OptimizeActionStage1 {
 
     match &ir[statement_idx] {
 
@@ -68,24 +68,24 @@ fn find_optimization_stage1(ir: &Vec<IRStatement>, statement_idx: usize, known_v
                 return OptimizeActionStage1::DeleteStatement;
             }
             else {
-                
-                for check_idx in (statement_idx + 1)..ir.len() {
 
-                    if let IRStatement::While(_, _, _) = &ir[check_idx] {
+                for (check_idx, check_statement) in ir.iter().enumerate().skip(statement_idx + 1) {
 
-                        if ir[check_idx].references_identifier(*id) {
+                    if let IRStatement::While(_, _, _) = check_statement {
+
+                        if check_statement.references_identifier(*id) {
                             break;
                         }
                     }
 
-                    if !ir[check_idx].references_identifier(*id) {
+                    if !check_statement.references_identifier(*id) {
                         continue;
                     }
 
-                    match ir[check_idx] {
+                    match check_statement {
                         IRStatement::AddConst(_, _) =>
                             return OptimizeActionStage1::CombineAdd(*num, check_idx),
-                        IRStatement::MoveCell(_, from_id) if *id == from_id =>
+                        IRStatement::MoveCell(_, from_id) if *id == *from_id =>
                             return OptimizeActionStage1::CombineAdd(*num, check_idx),
                         _ => {}
                     }
@@ -113,7 +113,7 @@ fn find_optimization_stage1(ir: &Vec<IRStatement>, statement_idx: usize, known_v
                     let negated = num.wrapping_neg();
 
                     OptimizeActionStage1::ReplaceStatement(
-                        to.into_iter()
+                        to.iter()
                             .map(|(id, negate)| 
                                 IRStatement::AddConst(*id, if *negate {negated} else {num}))
                             .chain([IRStatement::AddConst(*from, negated)])
@@ -297,7 +297,7 @@ enum OptimizeActionStage2 {
     None
 }
 
-fn find_optimization_stage2(ir: &Vec<IRStatement>, statement_idx: usize) -> OptimizeActionStage2 {
+fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> OptimizeActionStage2 {
 
     match ir[statement_idx] {
 
@@ -308,9 +308,7 @@ fn find_optimization_stage2(ir: &Vec<IRStatement>, statement_idx: usize) -> Opti
                 let id = mem.get_identifier();
                 let mut delete = true;
 
-                for check_idx in (statement_idx + 1)..ir.len() {
-
-                    let ir_statement = &ir[check_idx];
+                for ir_statement in ir.iter().skip(statement_idx + 1) {
 
                     match ir_statement {
                         IRStatement::Free(id2) => if id == *id2 {

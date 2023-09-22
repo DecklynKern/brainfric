@@ -1,3 +1,4 @@
+use crate::lex::Name;
 use crate::parse::DataType;
 
 pub trait ErrorDesc {
@@ -29,17 +30,17 @@ impl ErrorDesc for ParseError {
 
     fn get_description(&self) -> String {
         format!("Parse Error: {}", match self {
-            Self::InvalidStatement => format!("Invalid statement"),
-            Self::InvalidExpression => format!("Invalid expression"),
-            Self::ExpectedIdentifier => format!("Expected identifier"),
-            Self::ExpectedNumberLiteral => format!("Expected number literal"),
-            Self::ExpectedEnd => format!("Expected end statement to block")
+            Self::InvalidStatement => "Invalid statement",
+            Self::InvalidExpression => "Invalid expression",
+            Self::ExpectedIdentifier => "Expected identifier",
+            Self::ExpectedNumberLiteral => "Expected number literal",
+            Self::ExpectedEnd => "Expected end statement to block"
         })
     }
 }
 
 pub enum IRError {
-    UnknownIdentifier(String),
+    UnknownIdentifier(Name),
     TypeMismatch(DataType, DataType),
     ExpectedTypedExpression(DataType)
 }

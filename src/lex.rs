@@ -3,6 +3,8 @@ use crate::err;
 
 use std::rc::Rc;
 
+pub type Name = Rc<str>;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Type {
     Bool,
@@ -14,8 +16,8 @@ pub enum Type {
 
 impl Type {
 
-    fn try_parse(token: &String) -> Option<Token> {
-        Some(Token::Type(match token.as_str() {
+    fn try_parse(token: &str) -> Option<Token> {
+        Some(Token::Type(match token {
             "bool" => Self::Bool,
             "byte" => Self::Byte,
             "short" => Self::Short,
@@ -44,8 +46,8 @@ pub enum Keyword {
 
 impl Keyword {
 
-    fn try_parse(token: &String) -> Option<Token> {
-        Some(Token::Keyword(match token.as_str() {
+    fn try_parse(token: &str) -> Option<Token> {
+        Some(Token::Keyword(match token {
             "inc" => Self::Inc,
             "dec" => Self::Dec,
             "while" => Self::While,
@@ -69,11 +71,11 @@ pub enum Literal {
 impl Literal {
     
     // lol
-    fn try_parse_bool(token: &String) -> Option<Token> {
+    fn try_parse_bool(token: &str) -> Option<Token> {
         token.parse::<bool>().map(|literal|Token::Literal(Self::Bool(literal))).ok()
     }
     
-    fn try_parse_number(token: &String) -> Option<Token> {
+    fn try_parse_number(token: &str) -> Option<Token> {
         token.parse::<usize>().map(|literal|Token::Literal(Self::Number(literal))).ok()
     }
 }
@@ -88,9 +90,9 @@ pub enum Separator {
 
 impl Separator {
     
-    fn try_parse(token: &String) -> Option<Token> {
+    fn try_parse(token: &str) -> Option<Token> {
 
-        Some(Token::Separator(match token.as_str() {
+        Some(Token::Separator(match token {
             "(" => Self::OpenParen,
             ")" => Self::CloseParen,
             "[" => Self::OpenSquare,
@@ -109,9 +111,9 @@ pub enum UnaryOperator {
 
 impl UnaryOperator {
     
-    fn try_parse(token: &String) -> Option<Token> {
+    fn try_parse(token: &str) -> Option<Token> {
 
-        Some(Token::UnaryOperator(match token.as_str() {
+        Some(Token::UnaryOperator(match token {
             "?" => Self::AsBool,
             "#" => Self::AsNum,
             "!" => Self::Not,
@@ -134,14 +136,14 @@ pub enum BinaryOperator {
 
     And,
     Or
-    
+
 }
 
 impl BinaryOperator {
     
-    fn try_parse(token: &String) -> Option<Token> {
+    fn try_parse(token: &str) -> Option<Token> {
 
-        Some(Token::BinaryOperator(match token.as_str() {
+        Some(Token::BinaryOperator(match token {
             "<-" => Self::SetTo,
             "=" => Self::Equals,
             "<" => Self::LessThan,
@@ -158,13 +160,17 @@ impl BinaryOperator {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
-    Identifier(String),
+    Identifier(Name),
     Type(Type),
     Keyword(Keyword),
     Literal(Literal),
     Separator(Separator),
     UnaryOperator(UnaryOperator),
     BinaryOperator(BinaryOperator)
+}
+
+pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
+    code.split('\n').enumerate().map(lex_line).collect()
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -174,10 +180,6 @@ enum TokenInitialChar {
     Quote,
     Other,
     None
-}
-
-pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
-    code.split("\n").enumerate().map(lex_line).into_iter().collect()
 }
 
 fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
@@ -210,7 +212,7 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
                 tokens.push(token);
             }
             else {
-                tokens.push(Token::Identifier(current_token.clone()));
+                tokens.push(Token::Identifier(current_token.clone().into()));
             }
         }
         else if current_token_initial_char == TokenInitialChar::Numeric && 
@@ -240,7 +242,7 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
             let mut try_add = current_token.clone();
             try_add.push(chr);
 
-            if let Some(_) = BinaryOperator::try_parse(&try_add) {
+            if BinaryOperator::try_parse(&try_add).is_some() {
                 current_token.push(chr);
                 continue;
             }

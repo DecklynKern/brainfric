@@ -12,7 +12,7 @@ pub enum DataType {
     Byte,
     Short,
     Stack(usize),
-    Array(Box<DataType>, usize)
+    //Array(Rc<DataType>, usize)
 }
 
 impl DataType {
@@ -24,12 +24,10 @@ impl DataType {
             Self::Byte => 1,
             Self::Short => 2,
             Self::Stack(len) => *len,
-            Self::Array(data_type, len) => data_type.get_size() * len
+            //Self::Array(data_type, len) => data_type.get_size() * len
         }
     }
 }
-
-pub type Name = String;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
@@ -85,7 +83,7 @@ impl Expression {
     fn try_parse_term(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
         match tokens.peek() {
-            
+
             Some(token) => {
                 match token {
 
@@ -108,11 +106,11 @@ impl Expression {
                                     
                                     tokens.next();
 
-                                    Expression::try_parse_factor(tokens).and_then(|factor2|
-                                        Some(Self::Multiply(
+                                    Expression::try_parse_factor(tokens).map(|factor2|
+                                        Self::Multiply(
                                             Box::new(factor1),
                                             Box::new(factor2)
-                                        ))
+                                        )
                                     )
                                 }
                                 _ => Some(factor1)
@@ -179,38 +177,6 @@ impl std::fmt::Debug for Statement {
     }
 }
 
-fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &Vec<Token>, current_line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
-
-    Expression::try_parse(&mut current_line[1..].iter().peekable()).map(|expression| {
-
-        let mut loop_lines = Vec::new();
-        let mut loop_depth = 1;
-
-        while loop_depth > 0 {
-
-            if let Some(line) = tokens.pop() {
-
-                match line[0] {
-                    Token::Keyword(Keyword::If | Keyword::While) => loop_depth += 1,
-                    Token::Keyword(Keyword::End) => loop_depth -= 1,
-                    _ => {}
-                }
-
-                loop_lines.push(line);
-
-            }
-            else {
-                err!(current_line_num, ParseError::ExpectedEnd)
-            }
-        }
-
-        loop_lines.pop();
-        Ok((expression, parse(loop_lines, current_line_num)?))
-
-    }).unwrap_or_else(|| err!(current_line_num, ParseError::InvalidExpression))
-
-}
-
 pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<Statement>, BrainFricError> {
 
     tokens.reverse();
@@ -221,7 +187,7 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
 
         current_line_num += 1;
 
-        if line.len() < 1 {
+        if line.is_empty() {
             continue;
         }
 
@@ -307,5 +273,37 @@ pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result
     }
 
     Ok(statements)
+
+}
+
+fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &[Token], current_line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
+
+    Expression::try_parse(&mut current_line[1..].iter().peekable()).map(|expression| {
+
+        let mut loop_lines = Vec::new();
+        let mut loop_depth = 1;
+
+        while loop_depth > 0 {
+
+            if let Some(line) = tokens.pop() {
+
+                match line[0] {
+                    Token::Keyword(Keyword::If | Keyword::While) => loop_depth += 1,
+                    Token::Keyword(Keyword::End) => loop_depth -= 1,
+                    _ => {}
+                }
+
+                loop_lines.push(line);
+
+            }
+            else {
+                err!(current_line_num, ParseError::ExpectedEnd)
+            }
+        }
+
+        loop_lines.pop();
+        Ok((expression, parse(loop_lines, current_line_num)?))
+
+    }).unwrap_or_else(|| err!(current_line_num, ParseError::InvalidExpression))
 
 }

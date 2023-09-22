@@ -1,97 +1,168 @@
 extern crate brainfric;
 
-use brainfric::*;
+use brainfric::lex::*;
+use brainfric::parse::*;
+use brainfric::ir::*;
+use brainfric::optimize::*;
+use brainfric::lower::*;
 
 macro_rules! program {
     () => {
-        "   byte     a   \n  a  <-  240  "
+        "
+        byte a
+        byte b
+        byte c
+
+        a <- 240
+        read b
+
+        c <- a - b
+        write c
+        "
     }
 }
 macro_rules! tokens {
     () => {
         vec![
+            vec![],
             vec![
-                lex::Token::Type(lex::Type::Byte),
-                lex::Token::Identifier("a".to_string())
+                Token::Type(Type::Byte),
+                Token::Identifier("a".into())
             ],
             vec![
-                lex::Token::Identifier("a".to_string()),
-                lex::Token::BinaryOperator(lex::BinaryOperator::SetTo),
-                lex::Token::Literal(lex::Literal::Number(240))
-            ]
+                Token::Type(Type::Byte),
+                Token::Identifier("b".into())
+            ],
+            vec![
+                Token::Type(Type::Byte),
+                Token::Identifier("c".into())
+            ],
+            vec![],
+            vec![
+                Token::Identifier("a".into()),
+                Token::BinaryOperator(BinaryOperator::SetTo),
+                Token::Literal(Literal::Number(240))
+            ],
+            vec![
+                Token::Keyword(Keyword::Read),
+                Token::Identifier("b".into())
+            ],
+            vec![],
+            vec![
+                Token::Identifier("c".into()),
+                Token::BinaryOperator(BinaryOperator::SetTo),
+                Token::Identifier("a".into()),
+                Token::BinaryOperator(BinaryOperator::Minus),
+                Token::Identifier("b".into())
+            ],
+            vec![
+                Token::Keyword(Keyword::Write),
+                Token::Identifier("c".into())
+            ],
+            vec![],
         ]
     };
 }
 macro_rules! statements {
     () => {
         vec![
-            parse::Statement {
-                line_num: 1,
-                body: parse::StatementBody::Declaration("a".to_string(), parse::DataType::Byte)
-            },
-            parse::Statement {
+            Statement {
                 line_num: 2,
-                body: parse::StatementBody::SetTo(
-                    "a".to_string(),
-                    parse::Expression::NumberLiteral(240)
+                body: StatementBody::Declaration("a".into(), DataType::Byte)
+            },
+            Statement {
+                line_num: 3,
+                body: StatementBody::Declaration("b".into(), DataType::Byte)
+            },
+            Statement {
+                line_num: 4,
+                body: StatementBody::Declaration("c".into(), DataType::Byte)
+            },
+            Statement {
+                line_num: 6,
+                body: StatementBody::SetTo(
+                    "a".into(),
+                    Expression::NumberLiteral(240)
                 )
+            },
+            Statement {
+                line_num: 7,
+                body: StatementBody::Read("b".into())
+            },
+            Statement {
+                line_num: 9,
+                body: StatementBody::SetTo(
+                    "c".into(),
+                    Expression::Subtract(
+                        Box::new(Expression::Identifier("a".into())),
+                        Box::new(Expression::Identifier("b".into()))
+                    )
+                )
+            },
+            Statement {
+                line_num: 10,
+                body: StatementBody::Write(Expression::Identifier("c".into()))
             }
         ]
     };
 }
 
-macro_rules! ir_statements {
-    () => {
-        ir::IRBlock(vec![
-            ir::IRStatement::Alloc(0, 1, false),
-            ir::IRStatement::AddConst(0, 240)
-        ])
-    };
-}
-
 macro_rules! bf_code {
     () => {
-        "----------------"
+        ">,<---------------->>----------------<[->>+<<]>>[-<<->->]<."
     };
 }
 
 #[test]
-fn basic_lexer_check() {
+fn lexer_check() {
     assert_eq!(
-        lex::lex(program!()).unwrap_or_else(|_| panic!()),
+        lex(program!()).unwrap_or_else(|_| panic!()),
         tokens!()
     )
 }
 
 #[test]
-fn basic_parser_check() {
+fn parser_check() {
     assert_eq!(
-        parse::parse(tokens!(), 0).unwrap_or_else(|_| panic!()),
+        parse(tokens!(), 0).unwrap_or_else(|_| panic!()),
         statements!()
     )
 }
 
-#[test]
-fn basic_ir_check() {
+// #[test]
+// fn basic_ir_check() {
 
-    let mut ir_generator = ir::IRGenerator::new();
-    let mut generated_ir = ir_generator.generate_ir(statements!()).unwrap_or_else(|_| panic!());
+//     let mut ir_generator = IRGenerator::new();
+//     let mut generated_ir = ir_generator.generate_ir(statements!()).unwrap_or_else(|_| panic!());
     
-    optimize::optimize(&mut generated_ir);
+//     optimize(&mut generated_ir);
 
-    assert_eq!(
-        generated_ir,
-        ir_statements!()
-    )
-}
+//     assert_eq!(
+//         generated_ir,
+//         ir_statements!()
+// //     )
+// // }
+
+// #[test]
+// fn basic_lower_check() {
+
+//     let mut lowerer = Lowerer::new();
+
+//     assert_eq!(
+//         lowerer.lower(ir_statements!().0),
+//         bf_code!()
+//     )
+// }
 
 #[test]
-fn basic_lower_check() {
+fn ir_to_lowered_check() {
 
-    let mut lowerer = lower::Lowerer::new();
+    let mut generated_ir = generate_ir(statements!()).unwrap_or_else(|_| panic!());
+    
+    optimize(&mut generated_ir);
 
     assert_eq!(
-        lowerer.lower(ir_statements!().0),
+        lower(generated_ir.0),
         bf_code!()
     )
 }

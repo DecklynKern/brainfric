@@ -17,7 +17,7 @@ mod optimize;
 mod lower;
 mod clean;
 
-fn compile(code: &String) -> Result<String, BrainFricError> {
+fn compile(code: &str) -> Result<String, BrainFricError> {
 
     let tokenized = lex::lex(code)?;
 
@@ -33,11 +33,10 @@ fn compile(code: &String) -> Result<String, BrainFricError> {
 
     if args::arg_show_parse() {
         println!("=== PARSER PASS ===");
-        print!("{statements:#?}\n");
+        println!("{statements:#?}");
     }
 
-    let mut ir_generator = ir::IRGenerator::new();
-    let mut ir = ir_generator.generate_ir(statements)?;
+    let mut ir = ir::generate_ir(statements)?;
 
     if args::arg_show_ir() {
         println!("=== IR PASS ===");
@@ -67,8 +66,7 @@ fn compile(code: &String) -> Result<String, BrainFricError> {
         }
     }
 
-    let mut lowerer = lower::Lowerer::new();
-    let mut bf_code = lowerer.lower(ir.0);
+    let mut bf_code = lower::lower(ir.0);
 
     if args::arg_show_lowered() {
         println!("=== LOWERING PASS ===");
