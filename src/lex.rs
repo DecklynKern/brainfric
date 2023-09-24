@@ -6,30 +6,20 @@ use std::rc::Rc;
 pub type Name = Rc<str>;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Type {
+pub enum Token {
+
+    Identifier(Name),
+
+    BoolLiteral(bool),
+    NumberLiteral(i32),
+    CharLiteral(char),
+    StringLiteral(Rc<str>),
+
     Bool,
     Byte,
     Short,
     Stack,
     Array,
-}
-
-impl Type {
-
-    fn try_parse(token: &str) -> Option<Token> {
-        Some(Token::Type(match token {
-            "bool" => Self::Bool,
-            "byte" => Self::Byte,
-            "short" => Self::Short,
-            "stack" => Self::Stack,
-            "array" => Self::Array,
-            _ => return None
-        }))
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Keyword {
 
     Inc,
     Dec,
@@ -40,14 +30,41 @@ pub enum Keyword {
 
     Write,
     WriteLine,
-    Read
+    Read,
+
+    OpenParen,
+    CloseParen,
+    OpenSquare,
+    CloseSquare,
+    OpenAngle,
+    CloseAngle,
+
+    AsBool,
+    AsNum,
+    Not,
+
+    SetTo,
+
+    Equal,
+    Plus,
+    Hypen,
+    Star,
+
+    At,
+    Ampersand,
+    Pipe
 
 }
 
-impl Keyword {
+impl Token {
 
-    fn try_parse(token: &str) -> Option<Token> {
-        Some(Token::Keyword(match token {
+    fn try_parse_keyword(token: &str) -> Option<Self> {
+        Some(match token {
+            "bool" => Self::Bool,
+            "byte" => Self::Byte,
+            "short" => Self::Short,
+            "stack" => Self::Stack,
+            "array" => Self::Array,
             "inc" => Self::Inc,
             "dec" => Self::Dec,
             "while" => Self::While,
@@ -57,116 +74,52 @@ impl Keyword {
             "writeln" => Self::WriteLine,
             "read" => Self::Read,
             _ => return None
-        }))
+        })
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Literal {
-    Bool(bool),
-    Number(usize),
-    String(Rc<str>)
-}
-
-impl Literal {
-    
-    // lol
-    fn try_parse_bool(token: &str) -> Option<Token> {
-        token.parse::<bool>().map(|literal|Token::Literal(Self::Bool(literal))).ok()
+    fn try_parse_bool_literal(token: &str) -> Option<Self> {
+        token.parse::<bool>().map(Self::BoolLiteral).ok()
     }
     
-    fn try_parse_number(token: &str) -> Option<Token> {
-        token.parse::<usize>().map(|literal|Token::Literal(Self::Number(literal))).ok()
+    fn try_parse_number_literal(token: &str) -> Option<Self> {
+        token.parse::<i32>().map(Self::NumberLiteral).ok()
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Separator {
-    OpenParen,
-    CloseParen,
-    OpenSquare,
-    CloseSquare
-}
+    fn try_parse_symbols(token: &str) -> Option<Self> {
 
-impl Separator {
-    
-    fn try_parse(token: &str) -> Option<Token> {
-
-        Some(Token::Separator(match token {
+        Some(match token {
             "(" => Self::OpenParen,
             ")" => Self::CloseParen,
             "[" => Self::OpenSquare,
             "]" => Self::CloseSquare,
-            _ => return None
-        }))
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum UnaryOperator {
-    AsBool,
-    AsNum,
-    Not
-}
-
-impl UnaryOperator {
-    
-    fn try_parse(token: &str) -> Option<Token> {
-
-        Some(Token::UnaryOperator(match token {
+            "<" => Self::OpenAngle,
+            ">" => Self::CloseAngle,
             "?" => Self::AsBool,
             "#" => Self::AsNum,
             "!" => Self::Not,
-            _ => return None
-        }))
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum BinaryOperator {
-
-    SetTo,
-
-    Equals,
-    LessThan,
-    GreaterThan,
-    Plus,
-    Minus,
-    Times,
-
-    And,
-    Or
-
-}
-
-impl BinaryOperator {
-    
-    fn try_parse(token: &str) -> Option<Token> {
-
-        Some(Token::BinaryOperator(match token {
             "<-" => Self::SetTo,
-            "=" => Self::Equals,
-            "<" => Self::LessThan,
-            ">" => Self::GreaterThan,
+            "=" => Self::Equal,
             "+" => Self::Plus,
-            "-" => Self::Minus,
-            "*" => Self::Times,
-            "&" => Self::And,
-            "|" => Self::Or,
+            "-" => Self::Hypen,
+            "*" => Self::Star,
+            "@" => Self::At,
+            "&" => Self::Ampersand,
+            "|" => Self::Pipe,
             _ => return None
-        }))
+        })
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Token {
-    Identifier(Name),
-    Type(Type),
-    Keyword(Keyword),
-    Literal(Literal),
-    Separator(Separator),
-    UnaryOperator(UnaryOperator),
-    BinaryOperator(BinaryOperator)
+    pub fn is_type_head(&self) -> bool {
+        matches!(self, Self::Bool | Self::Byte | Self::Short | Self::Stack | Self::Array)
+    }
+
+    pub fn is_unary_operator(&self) -> bool {
+        matches!(self, Self::AsBool | Self::AsNum | Self::Not)
+    }
+
+    pub fn is_binary_operator(&self) -> bool {
+        matches!(self, Self::Equal | Self::OpenAngle | Self::CloseAngle | Self::Plus | Self::Hypen | Self::Ampersand | Self::Pipe)
+    }
 }
 
 pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
@@ -177,9 +130,17 @@ pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
 enum TokenInitialChar {
     Alphabetic,
     Numeric,
-    Quote,
+    SingleQuote,
+    DoubleQuote,
     Other,
     None
+}
+
+impl TokenInitialChar {
+
+    fn is_quote(&self) -> bool {
+        matches!(self, Self::SingleQuote | Self::DoubleQuote)
+    }
 }
 
 fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
@@ -193,22 +154,19 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
 
     while let Some(chr) = chars.pop() {
 
-        let token_over = (chr.is_whitespace() && current_token_initial_char != TokenInitialChar::Quote) || chars.is_empty();
+        let token_over = (chr.is_whitespace() && current_token_initial_char.is_quote()) || chars.is_empty();
         let mut token_ended = true;
 
-        if current_token_initial_char != TokenInitialChar::Quote && current_token == "//" {
+        if current_token_initial_char != TokenInitialChar::DoubleQuote && current_token == "//" {
             break; // comment
         }
         else if current_token_initial_char == TokenInitialChar::Alphabetic && 
             (!(chr.is_alphanumeric() || chr == '_') || token_over) {
 
-            if let Some(token) = Keyword::try_parse(&current_token) {
+            if let Some(token) = Token::try_parse_keyword(&current_token) {
                 tokens.push(token);
             }
-            else if let Some(token) = Type::try_parse(&current_token) {
-                tokens.push(token);
-            }
-            else if let Some(token) = Literal::try_parse_bool(&current_token) {
+            else if let Some(token) = Token::try_parse_bool_literal(&current_token) {
                 tokens.push(token);
             }
             else {
@@ -218,31 +176,38 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
         else if current_token_initial_char == TokenInitialChar::Numeric && 
             (!chr.is_numeric() || token_over) {
 
-            if let Some(token) = Literal::try_parse_number(&current_token) {
+            if let Some(token) = Token::try_parse_number_literal(&current_token) {
                 tokens.push(token);
             }
             else {
                 err!(line_num, LexError::InvalidToken(current_token.clone()));
             }
         }
-        else if current_token_initial_char == TokenInitialChar::Quote && chr == '"' {
-            tokens.push(Token::Literal(Literal::String(current_token[1..].into())));
+        else if current_token_initial_char == TokenInitialChar::SingleQuote && chr == '\'' {
+
+            if current_token.len() != 2 {
+                err!(line_num, LexError::InvalidCharLiteral(current_token.clone()));
+            }
+
+            tokens.push(Token::CharLiteral(current_token.chars().nth(1).unwrap()));
+
+            current_token.clear();
+            current_token_initial_char = TokenInitialChar::None;
+            continue;
+
+        }
+        else if current_token_initial_char == TokenInitialChar::DoubleQuote && chr == '"' {
+            tokens.push(Token::StringLiteral(current_token[1..].into()));
             current_token.clear();
             current_token_initial_char = TokenInitialChar::None;
             continue;
         }
-        else if let Some(token) = Separator::try_parse(&current_token) {
-            tokens.push(token);
-        }
-        else if let Some(token) = UnaryOperator::try_parse(&current_token) {
-            tokens.push(token);
-        }
-        else if let Some(token) = BinaryOperator::try_parse(&current_token) {
+        else if let Some(token) = Token::try_parse_symbols(&current_token) {
 
             let mut try_add = current_token.clone();
             try_add.push(chr);
 
-            if BinaryOperator::try_parse(&try_add).is_some() {
+            if Token::try_parse_symbols(&try_add).is_some() {
                 current_token.push(chr);
                 continue;
             }
@@ -264,8 +229,11 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
             else if chr.is_numeric() {
                 TokenInitialChar::Numeric
             }
+            else if chr == '\'' {
+                TokenInitialChar::SingleQuote
+            }
             else if chr == '"' {
-                TokenInitialChar::Quote
+                TokenInitialChar::DoubleQuote
             }
             else if chr.is_whitespace() {
                 TokenInitialChar::None
@@ -278,6 +246,10 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
         if !token_over {
             current_token.push(chr);
         }
+    }
+
+    if !current_token.is_empty() {
+        err!(line_num, LexError::InvalidToken(current_token));
     }
 
     Ok(tokens)

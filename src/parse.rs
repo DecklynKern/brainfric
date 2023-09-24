@@ -6,6 +6,19 @@ use crate::error::*;
 use crate::err;
 use crate::lex::*;
 
+macro_rules! expect_token {
+    ($tokens: ident, $token: expr) => {
+        if let Some(token) = $tokens.next() {
+            if *token != $token {
+                return None;
+            }
+        }
+        else {
+            return None;
+        }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataType {
     Bool,
@@ -23,18 +36,59 @@ impl DataType {
             Self::Bool => 1,
             Self::Byte => 1,
             Self::Short => 2,
-            Self::Stack(len) => *len,
+            Self::Stack(len) => *len + 2,
             //Self::Array(data_type, len) => data_type.get_size() * len
         }
+    }
+
+    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+
+        tokens.next().and_then(|type_name| Some(match type_name {
+            Token::Bool => Self::Bool,
+            Token::Byte => Self::Byte,
+            Token::Short => Self::Short,
+            Token::Stack => {
+
+                expect_token!(tokens, Token::OpenAngle);
+
+                match tokens.next() {
+                    Some(Token::NumberLiteral(size)) => {
+                        expect_token!(tokens, Token::CloseAngle);
+                        DataType::Stack(*size as usize)
+                    }
+                    _ => return None
+                }
+            }
+            Token::Array => todo!(),
+            _ => unreachable!()
+        }))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Accessor {
+    Identifier(Name),
+    Push(Box<Accessor>),
+    Pop(Box<Accessor>)
+}
+
+impl Accessor {
+
+    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+
+        tokens.next().and_then(|&token| match token {
+            Token::Identifier(name) => Some(Self::Identifier(name.clone())),
+            _ => None
+        })
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
 
-    Identifier(Name),
+    Access(Accessor),
     BoolLiteral(bool),
-    NumberLiteral(usize),
+    NumberLiteral(i32),
     StringLiteral(Rc<str>),
 
     Equals(Box<Expression>, Box<Expression>),
@@ -58,25 +112,17 @@ impl Expression {
 
     fn try_parse_factor(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
-        tokens.next().and_then(|token| {
+        tokens.next().and_then(|token| match token {
 
-            match token {
-                Token::Identifier(name) => Some(Self::Identifier(name.clone())),
-                Token::Literal(Literal::Bool(val)) => Some(Self::BoolLiteral(*val)),
-                Token::Literal(Literal::Number(val)) => Some(Self::NumberLiteral(*val)),
-                Token::Literal(Literal::String(val)) => Some(Self::StringLiteral(val.clone())),
-                Token::Separator(Separator::OpenParen) => {
-
-                    Expression::try_parse(tokens).and_then(|expr| {
-
-                        tokens.next().and_then(|next_token| match next_token {
-                            Token::Separator(Separator::CloseParen) => Some(expr),
-                            _ => None
-                        })  
-                    })
-                }
-                _ => None
-            }
+            Token::OpenParen => Self::try_parse(tokens).and_then(|expr| {
+                expect_token!(tokens, Token::CloseParen);
+                Some(expr)
+            }),
+            Token::BoolLiteral(val) => Some(Self::BoolLiteral(*val)),
+            Token::NumberLiteral(val) => Some(Self::NumberLiteral(*val)),
+            Token::CharLiteral(chr) => Some(Self::NumberLiteral(*chr as i32)),
+            Token::StringLiteral(val) => Some(Self::StringLiteral(val.clone())),
+            _ => Accessor::try_parse(tokens).map(Self::Access)
         })
     }
 
@@ -84,39 +130,35 @@ impl Expression {
 
         match tokens.peek() {
 
-            Some(token) => {
-                match token {
+            Some(&token) => {
 
-                    Token::UnaryOperator(op) => {
+                if token.is_unary_operator() {
+
+                    let op = token.clone();
+
+                    tokens.next();
     
-                        tokens.next();
-    
-                        Expression::try_parse_term(tokens).map(|term| match op {
-                            UnaryOperator::AsBool => Self::AsBool,
-                            UnaryOperator::AsNum => Self::AsNum,
-                            UnaryOperator::Not => Self::Not
-                        }(Box::new(term)))
-                    }
-                    _ => {
+                    Self::try_parse_term(tokens).map(|term| match op {
+                        Token::AsBool => Self::AsBool,
+                        Token::AsNum => Self::AsNum,
+                        Token::Not => Self::Not,
+                        _ => unreachable!()
+                    }(Box::new(term)))
+                }
+                else {
                         
-                        Expression::try_parse_factor(tokens).and_then(|factor1| {
+                    Self::try_parse_factor(tokens).and_then(|factor1| match tokens.peek() {
 
-                            match tokens.peek() {
-                                Some(Token::BinaryOperator(BinaryOperator::Times)) => {
-                                    
-                                    tokens.next();
+                        Some(Token::Star) => {
+                            
+                            tokens.next();
 
-                                    Expression::try_parse_factor(tokens).map(|factor2|
-                                        Self::Multiply(
-                                            Box::new(factor1),
-                                            Box::new(factor2)
-                                        )
-                                    )
-                                }
-                                _ => Some(factor1)
-                            }
-                        })
-                    }
+                            Self::try_parse_factor(tokens).map(|factor2|
+                                Self::Multiply(Box::new(factor1), Box::new(factor2))
+                            )
+                        }
+                        _ => Some(factor1)
+                    })
                 }
             }
             None => None
@@ -125,30 +167,35 @@ impl Expression {
 
     fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
-        Expression::try_parse_term(tokens).and_then(|term1| {
+        Expression::try_parse_term(tokens).and_then(|term1| match tokens.peek() {
 
-            match tokens.peek() {
-                Some(Token::BinaryOperator(op)) => {
+            Some(&token) => {
 
+                if token.is_binary_operator() {
+
+                    let op = token.clone();
+    
                     tokens.next();
-
-                    Expression::try_parse_term(tokens).and_then(|term2| {
-                        
-                        Some(match op {
-                            BinaryOperator::Equals => Self::Equals,
-                            BinaryOperator::LessThan => Self::LessThan,
-                            BinaryOperator::GreaterThan => Self::GreaterThan,
-                            BinaryOperator::Plus => Self::Add,
-                            BinaryOperator::Minus => Self::Subtract,
-                            BinaryOperator::And => Self::And,
-                            BinaryOperator::Or => Self::Or,
-                            _ => {return None;}
+    
+                    Self::try_parse_term(tokens)
+                        .and_then(|term2| Some(match op {
+                            Token::Equal => Self::Equals,
+                            Token::OpenAngle => Self::LessThan,
+                            Token::CloseAngle => Self::GreaterThan,
+                            Token::Plus => Self::Add,
+                            Token::Hypen => Self::Subtract,
+                            Token::Ampersand => Self::And,
+                            Token::Pipe => Self::Or,
+                            Token::Star => return None,
+                            _ => unreachable!()
                         }(Box::new(term1), Box::new(term2)))
-                    })
+                    )
                 }
-                Some(_) => None,
-                None => Some(term1)
+                else {
+                    None
+                }
             }
+            None => Some(term1)
         })
     }
 }
@@ -156,13 +203,131 @@ impl Expression {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StatementBody {
     Declaration(Name, DataType),
-    SetTo(Name, Expression),
-    Inc(Name),
-    Dec(Name),
+    SetTo(Accessor, Expression),
+    Inc(Accessor),
+    Dec(Accessor),
     Write(Expression),
-    Read(Name),
+    Read(Accessor),
     While(Expression, Vec<Statement>),
     If(Expression, Vec<Statement>)
+}
+
+impl StatementBody {
+
+    fn try_parse(line_num: usize, tokens: &mut Peekable<Iter<Token>>) -> Result<Self, BrainFricError> {
+        
+        let token1 = match tokens.peek() {
+            Some(&token) => token.clone(),
+            None => unreachable!()
+        };
+        
+        if token1.is_type_head() {
+    
+            if let Some(data_type) = DataType::try_parse(tokens) && let Some(Token::Identifier(name)) = tokens.next() {
+                return Ok(Self::Declaration(name.clone(), data_type))
+            }
+            else {
+                err!(line_num, ParseError::InvalidExpression)
+            }
+        }
+
+        tokens.next();
+
+        let token2 = match tokens.next() {
+            Some(token) => token,
+            None => err!(line_num, ParseError::InvalidExpression)
+        };
+
+        Ok(match token1 {
+
+            Token::Inc => {
+                if let Some(accessor) = Accessor::try_parse(tokens) {
+                    Self::Inc(accessor)
+                }
+                else {
+                    err!(line_num, ParseError::InvalidAccessor);
+                }
+            }
+            Token::Dec => {
+                if let Some(accessor) = Accessor::try_parse(tokens) {
+                    Self::Dec(accessor)
+                }
+                else {
+                    err!(line_num, ParseError::InvalidAccessor);
+                }
+            }
+            Token::Write => {
+
+                if let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() {
+                    Self::Write(expression)
+                }
+                else {
+                    err!(line_num, ParseError::InvalidExpression);
+                }
+            }
+            Token::WriteLine => {
+                Self::Write(Expression::NumberLiteral(10))
+            }
+            Token::Read => {
+                if let Some(accessor) = Accessor::try_parse(tokens) {
+                    Self::Read(accessor)
+                }
+                else {
+                    err!(line_num, ParseError::InvalidAccessor);
+                }
+            }
+            _ => {
+
+                if let Some(accessor) = Accessor::try_parse(tokens) && *token2 == Token::SetTo {
+                    if let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() {
+                        Self::SetTo(accessor, expression)
+                    }
+                    else {
+                        err!(line_num, ParseError::InvalidExpression);
+                    }
+                }
+                else {
+                    err!(line_num, ParseError::InvalidStatement)
+                }             
+            }
+        })
+    }
+
+    fn try_parse_control_flow(lines: &mut Vec<Vec<Token>>, condition_tokens: &mut Peekable<Iter<Token>>, line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
+
+        condition_tokens.next();
+
+        if let Some(expression) = Expression::try_parse(condition_tokens) && condition_tokens.is_empty() {
+
+            let mut loop_lines = Vec::new();
+            let mut loop_depth = 1;
+
+            while loop_depth > 0 {
+
+                if let Some(line) = lines.pop() {
+
+                    match line[0] {
+                        Token::If | Token::While => loop_depth += 1,
+                        Token::End => loop_depth -= 1,
+                        _ => {}
+                    }
+
+                    loop_lines.push(line);
+
+                }
+                else {
+                    err!(line_num, ParseError::ExpectedEnd)
+                }
+            }
+
+            loop_lines.pop();
+            Ok((expression, parse(loop_lines, line_num)?))
+        
+        }
+        else {
+            err!(line_num, ParseError::InvalidExpression)
+        }
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -177,133 +342,45 @@ impl std::fmt::Debug for Statement {
     }
 }
 
-pub fn parse(mut tokens: Vec<Vec<Token>>, mut current_line_num: usize) -> Result<Vec<Statement>, BrainFricError> {
+pub fn parse(mut lines: Vec<Vec<Token>>, mut line_num: usize) -> Result<Vec<Statement>, BrainFricError> {
 
-    tokens.reverse();
+    lines.reverse();
 
     let mut statements = Vec::new();
 
-    while let Some(line) = tokens.pop() {
+    while let Some(line) = lines.pop() {
 
-        current_line_num += 1;
+        line_num += 1;
 
-        if line.is_empty() {
-            continue;
-        }
+        let mut line_tokens = line.iter().peekable();
 
-        let body = match &line[0] {
-            Token::Type(var_type) if let Token::Identifier(name) = &line[1] => {
+        let body = match line_tokens.peek() {
 
-                if *var_type == Type::Bool {
-                    StatementBody::Declaration(name.clone(), DataType::Bool) 
-                }
-                else if *var_type == Type::Byte {
-                    StatementBody::Declaration(name.clone(), DataType::Byte)
-                }
-                else if *var_type == Type::Short {
-                    StatementBody::Declaration(name.clone(), DataType::Short)
-                }
-                else if *var_type == Type::Array {
-                    todo!();
-                }
-                else {
-                    err!(current_line_num, ParseError::InvalidStatement);
-                }
+            Some(Token::If) => {
+                let (condition, if_statements) =
+                StatementBody::try_parse_control_flow(&mut lines, &mut line_tokens, line_num)?;
+                StatementBody::If(condition, if_statements)
             }
-            Token::Identifier(name) if Token::BinaryOperator(BinaryOperator::SetTo) == line[1] => {
-                if let Some(expression) = Expression::try_parse(&mut line[2..].iter().peekable()) {
-                    StatementBody::SetTo(name.clone(), expression)
-                }
-                else {
-                    err!(current_line_num, ParseError::InvalidExpression);
-                }
+            Some(Token::While) => {
+                let (condition, while_statements) =
+                StatementBody::try_parse_control_flow(&mut lines, &mut line_tokens, line_num)?;
+                StatementBody::While(condition, while_statements)
             }
-            Token::Keyword(Keyword::Inc) => {
-                if let Token::Identifier(name) = &line[1] {
-                    StatementBody::Inc(name.clone())
-                }
-                else {
-                    err!(current_line_num, ParseError::ExpectedIdentifier);
-                }
-            }
-            Token::Keyword(Keyword::Dec) => {
-                if let Token::Identifier(name) = &line[1] {
-                    StatementBody::Dec(name.clone())
-                }
-                else {
-                    err!(current_line_num, ParseError::ExpectedIdentifier);
-                }
-            }
-            Token::Keyword(Keyword::Write) => {
-                if let Some(expression) = Expression::try_parse(&mut line[1..].iter().peekable()) {
-                    StatementBody::Write(expression)
-                }
-                else {
-                    err!(current_line_num, ParseError::InvalidExpression);
-                }
-            }
-            Token::Keyword(Keyword::WriteLine) => {
-                StatementBody::Write(Expression::NumberLiteral(10))
-            }
-            Token::Keyword(Keyword::Read) => {
-                if let Token::Identifier(name) = &line[1] {
-                    StatementBody::Read(name.clone())
-                }
-                else {
-                    err!(current_line_num, ParseError::ExpectedIdentifier);
-                }
-            }
-            Token::Keyword(Keyword::While) => {
-                let (expression, loop_statements) = 
-                    parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
-                StatementBody::While(expression, loop_statements)
-            }
-            Token::Keyword(Keyword::If) => {
-                let (expression, loop_statements) = 
-                    parse_control_flow_statment(&mut tokens, &line, current_line_num)?;
-                StatementBody::If(expression, loop_statements)
-            }
-            _ => err!(current_line_num, ParseError::InvalidStatement)
+            Some(_) => StatementBody::try_parse(line_num, &mut line_tokens)?,
+            None => continue
         };
 
         statements.push(Statement {
-            line_num: current_line_num,
+            line_num,
             body
         });
+
+        if !line_tokens.is_empty() {
+            err!(line_num, ParseError::InvalidStatement)
+        }
+
     }
 
     Ok(statements)
-
-}
-
-fn parse_control_flow_statment(tokens: &mut Vec<Vec<Token>>, current_line: &[Token], current_line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
-
-    Expression::try_parse(&mut current_line[1..].iter().peekable()).map(|expression| {
-
-        let mut loop_lines = Vec::new();
-        let mut loop_depth = 1;
-
-        while loop_depth > 0 {
-
-            if let Some(line) = tokens.pop() {
-
-                match line[0] {
-                    Token::Keyword(Keyword::If | Keyword::While) => loop_depth += 1,
-                    Token::Keyword(Keyword::End) => loop_depth -= 1,
-                    _ => {}
-                }
-
-                loop_lines.push(line);
-
-            }
-            else {
-                err!(current_line_num, ParseError::ExpectedEnd)
-            }
-        }
-
-        loop_lines.pop();
-        Ok((expression, parse(loop_lines, current_line_num)?))
-
-    }).unwrap_or_else(|| err!(current_line_num, ParseError::InvalidExpression))
 
 }

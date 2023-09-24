@@ -6,14 +6,16 @@ pub trait ErrorDesc {
 }
 
 pub enum LexError {
-    InvalidToken(String)
+    InvalidToken(String),
+    InvalidCharLiteral(String)
 }
 
 impl ErrorDesc for LexError {
 
     fn get_description(&self) -> String {
         format!("Lex Error: {}", match self {
-            Self::InvalidToken(token) => format!("Invalid token: \"{token}\"")
+            Self::InvalidToken(token) => format!("Invalid token: \"{token}\""),
+            Self::InvalidCharLiteral(literal) => format!("Invalid char literal '{literal}'")
         })
     }
 }
@@ -21,7 +23,9 @@ impl ErrorDesc for LexError {
 pub enum ParseError {
     InvalidStatement,
     InvalidExpression,
-    ExpectedIdentifier,
+    InvalidAccessor,
+    ExpectedOpenAngle,
+    ExpectedCloseAngle,
     ExpectedNumberLiteral,
     ExpectedEnd
 }
@@ -32,7 +36,9 @@ impl ErrorDesc for ParseError {
         format!("Parse Error: {}", match self {
             Self::InvalidStatement => "Invalid statement",
             Self::InvalidExpression => "Invalid expression",
-            Self::ExpectedIdentifier => "Expected identifier",
+            Self::InvalidAccessor => "Invalid accessor",
+            Self::ExpectedOpenAngle => "Expected '<'",
+            Self::ExpectedCloseAngle => "Expected '>'",
             Self::ExpectedNumberLiteral => "Expected number literal",
             Self::ExpectedEnd => "Expected end statement to block"
         })
@@ -42,6 +48,9 @@ impl ErrorDesc for ParseError {
 pub enum IRError {
     UnknownIdentifier(Name),
     TypeMismatch(DataType, DataType),
+    ExpectedReadableAccess,
+    ExpectedWriteableAccess,
+    ExpectedModifyableAccess,
     ExpectedTypedExpression(DataType)
 }
 
@@ -53,6 +62,12 @@ impl ErrorDesc for IRError {
                 format!("Unknown identifier \"{identifier}\""),
             Self::TypeMismatch(expected_type, got_type) =>  
                 format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
+            Self::ExpectedReadableAccess =>
+                "Expected readable access".to_string(),
+            Self::ExpectedWriteableAccess =>
+                "Expected writeable access".to_string(),
+            Self::ExpectedModifyableAccess =>
+                "Expected modifyable access".to_string(),
             Self::ExpectedTypedExpression(expected_type) =>
                 format!("Expected {expected_type:?} expression")
         })

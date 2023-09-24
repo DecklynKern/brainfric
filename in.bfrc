@@ -1,5 +1,7 @@
-bool a
-byte b
+stack<5> s
 
-a <- true
-b <- #a
+@s <- 3
+
+// read @s
+// write &s
+// write *s

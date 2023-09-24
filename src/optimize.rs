@@ -43,6 +43,14 @@ pub fn optimize(ir: &mut IRBlock) -> [u32; 2] {
 
 }
 
+fn get_next_reference_idx(ir: &[IRStatement], id: Identifier, current_use_idx: usize) -> Option<usize> {
+    ir.iter()
+        .enumerate()
+        .skip(current_use_idx + 1)
+        .find_map(|(idx, statement)|
+            statement.references_identifier(id).then_some(idx))
+}
+
 #[derive(Debug)]
 enum OptimizeActionStage1 {
     DeleteStatement,
@@ -58,45 +66,29 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
 
     match &ir[statement_idx] {
 
-        IRStatement::Alloc(mem, _) => {
-            known_values.insert(mem.get_identifier(), Some(0));
-        },
+        IRStatement::Alloc(allocation) => {
+            known_values.insert(allocation.get_identifier(), Some(0));
+        }
         IRStatement::Free(_) => {}
         IRStatement::AddConst(id, num) => {
 
             if *num == 0 {
                 return OptimizeActionStage1::DeleteStatement;
             }
-            else {
 
-                for (check_idx, check_statement) in ir.iter().enumerate().skip(statement_idx + 1) {
+            if let Some(next_reference_idx) = get_next_reference_idx(ir, *id, statement_idx) {
 
-                    if let IRStatement::While(_, _, _) = check_statement {
-
-                        if check_statement.references_identifier(*id) {
-                            break;
-                        }
-                    }
-
-                    if !check_statement.references_identifier(*id) {
-                        continue;
-                    }
-
-                    match check_statement {
-                        IRStatement::AddConst(_, _) =>
-                            return OptimizeActionStage1::CombineAdd(*num, check_idx),
-                        IRStatement::MoveCell(_, from_id) if *id == *from_id =>
-                            return OptimizeActionStage1::CombineAdd(*num, check_idx),
-                        _ => {}
-                    }
-
-                    break;
-
+                match &ir[next_reference_idx] {
+                    IRStatement::AddConst(_, _) =>
+                        return OptimizeActionStage1::CombineAdd(*num, next_reference_idx),
+                    IRStatement::MoveCell(_, from) if *id == *from => 
+                        return OptimizeActionStage1::CombineAdd(*num, next_reference_idx),
+                    _ => {}
                 }
+            }
 
-                if let Some(num2) = known_values[id] {
-                    known_values.insert(*id, Some(num.overflowing_add(num2).0));
-                }
+            if let Some(num2) = known_values[id] {
+                known_values.insert(*id, Some(num.overflowing_add(num2).0));
             }
         }
         IRStatement::MoveCell(to, from) => {
@@ -121,30 +113,29 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                     )
                 };
             }
-            else  {
 
-                for (id, _) in to.iter() {
-                    known_values.insert(*id, None);
-                }
-                
-                known_values.insert(*from, Some(0));
+            for (id, _) in to.iter() {
+                known_values.insert(*id, None);
+            }
 
-                for check_idx in (0..statement_idx).rev() {
+            known_values.insert(*from, Some(0));
 
-                    if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
+            for check_idx in (0..statement_idx).rev() {
 
-                        if to2.contains(&(*from, true)) && !to.iter().any(|(id, _)| id == from2) {
-                            return OptimizeActionStage1::CombineMove(check_idx, *from, to.clone());
-                        }
+                if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
 
-                        if !to.is_empty() {
-                            break;
-                        }
+                    // add negation case eventually
+                    if to2.contains(&(*from, false)) && !to.iter().any(|(id, _)| id == from2) {
+                        return OptimizeActionStage1::CombineMove(check_idx, *from, to.clone());
                     }
 
-                    if ir[check_idx].references_identifier(*from) {
+                    if !to.is_empty() {
                         break;
                     }
+                }
+
+                if ir[check_idx].references_identifier(*from) {
+                    break;
                 }
             }
         }
@@ -152,14 +143,26 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
         IRStatement::ReadByte(id) => {
             known_values.insert(*id, None);
         }
-        IRStatement::While(id, _, run_once) => {
+        IRStatement::Loop(id, block, run_once) => {
 
-            return if *run_once {
+            let known_value = known_values[id];
 
-                match known_values[id] {
-                    Some(0) => OptimizeActionStage1::DeleteStatement,
-                    Some(_) => OptimizeActionStage1::GuaranteeIf,
-                    None => OptimizeActionStage1::OptimizeLoop
+            // can maybe make loop optimization more powerful
+            return if let Some(0) = known_value {
+                OptimizeActionStage1::DeleteStatement
+            }
+            else if *run_once {
+
+                let mut mutated_identifiers = block.get_mutated_identifiers();
+
+                if mutated_identifiers.remove(id) && mutated_identifiers.is_empty() && !block.contains_io() {
+                    OptimizeActionStage1::DeleteStatement
+                }
+                else {
+                    match known_values[id] {
+                        Some(_) => OptimizeActionStage1::GuaranteeIf,
+                        None => OptimizeActionStage1::OptimizeLoop
+                    }
                 }
             }
             else {
@@ -187,10 +190,10 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::GuaranteeIf => {
 
-                if let IRStatement::While(_, mut block, true) = ir.remove(statement_idx) {
+                if let IRStatement::Loop(_, mut block, true) = ir.remove(statement_idx) {
 
                     while let Some(statement) = block.0.pop() {
-                        ir.insert(statement_idx + 1, statement);
+                        ir.insert(statement_idx, statement);
                     }
 
                 } else {
@@ -200,18 +203,24 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::OptimizeLoop => {
 
-                if let IRStatement::While(id, block, _) = &mut ir[statement_idx] {
+                if let IRStatement::Loop(id, block, run_once) = &mut ir[statement_idx] {
 
-                    let used_addresses = block.get_used_identifiers();
+                    let mutated_identifiers = block.get_mutated_identifiers();
 
-                    for address in &used_addresses {
-                        known_values.insert(*address, None);
+                    if !*run_once {
+                        for address in &mutated_identifiers {
+                            known_values.insert(*address, None);
+                        }
                     }
                     
                     did_action = optimize_pass_stage1(&mut block.0, known_values);
+
+                    if !did_action {
+                        did_action = optimize_pass_stage2(&mut block.0);
+                    }
                     
-                    for address in &used_addresses {
-                        known_values.insert(*address, None);
+                    for mutated_id in &mutated_identifiers {
+                        known_values.insert(*mutated_id, None);
                     }
 
                     known_values.insert(*id, Some(0));
@@ -223,7 +232,7 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::CombineAdd(num, idx) => {
                 
-                for item in match &mut ir[idx] {
+                match &mut ir[idx] {
                     IRStatement::AddConst(_, num2) => {
                         *num2 = num2.overflowing_add(num).0;
                         vec![]
@@ -237,10 +246,8 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
                             .map(|(id, negate)| IRStatement::AddConst(*id, if *negate {negated} else {num}))
                             .collect()
                     }
-                    _ => panic!("combine add error")
-                } {
-                    ir.insert(idx + 1, item);
-                }
+                    _ => panic!("combine add fail")
+                }.into_iter().for_each(|item| ir.insert(idx + 1, item));
 
                 ir.remove(statement_idx);
 
@@ -262,14 +269,14 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
 
                 }
                 else {
-                    panic!()
+                    panic!("combine move fail")
                 }
             }
-            OptimizeActionStage1::ReplaceStatement(new_ir) => {
+            OptimizeActionStage1::ReplaceStatement(new_statements) => {
 
                 ir.remove(statement_idx);
 
-                for statement in new_ir.into_vec() {
+                for statement in new_statements.into_vec() {
                     ir.insert(statement_idx, statement);
                 }
             }
@@ -278,12 +285,11 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
         }
         
+        statement_idx += 1;
+        
         if did_action {
             return true;
         }
-        
-        statement_idx += 1;
-
     }
 
     false
@@ -301,37 +307,31 @@ fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> Optimiz
 
     match ir[statement_idx] {
 
-        IRStatement::Alloc(mem, _) => {
+        IRStatement::Alloc(allocation) => {
 
-            if mem.can_delete() {
+            if !allocation.can_delete() {
+                return OptimizeActionStage2::None;
+            }
 
-                let id = mem.get_identifier();
-                let mut delete = true;
+            let id = allocation.get_identifier();
 
-                for ir_statement in ir.iter().skip(statement_idx + 1) {
+            for ir_statement in ir.iter().skip(statement_idx + 1) {
 
-                    match ir_statement {
-                        IRStatement::Free(id2) => if id == *id2 {
-                            break;
-                        }
-                        _ => if ir_statement.uses_identifier_value(id) {
-                            delete = false;
-                            break;
-                        }
-                    }
+                if let IRStatement::Free(id2) = ir_statement && id == *id2 {
+                    return OptimizeActionStage2::DeleteIdentifier(id);
                 }
 
-                if delete {
-                    return OptimizeActionStage2::DeleteIdentifier(id);
+                if ir_statement.reads_identifier_value(id) {
+                    break;
                 }
             }
         }
-        IRStatement::AddConst(id1, _) => {
+        IRStatement::AddConst(access1, _) => {
             
-            if statement_idx != 0 && let IRStatement::AddConst(id2, _) = ir[statement_idx - 1] {
+            if statement_idx != 0 && let IRStatement::AddConst(access2, _) = ir[statement_idx - 1] {
 
                 // bubble sort by a different means
-                if id1 < id2 {
+                if access1.get_identifier() < access2.get_identifier() {
                     return OptimizeActionStage2::SwapPrevious;
                 }
             }
@@ -352,31 +352,19 @@ fn optimize_pass_stage2(ir: &mut Vec<IRStatement>) -> bool {
         let mut did_action = true;
 
         match find_optimization_stage2(ir, statement_idx) {
-
-            OptimizeActionStage2::DeleteIdentifier(id) => {
-                
-                let mut check_idx = 0;
-
-                while check_idx < ir.len() {
-
-                    if ir[check_idx].delete_identifier(id) {
-                        ir.remove(check_idx);
-                    }
-                    else {
-                        check_idx += 1;
-                    }
-                }
-            }
-            OptimizeActionStage2::SwapPrevious => ir.swap(statement_idx - 1, statement_idx),
-            OptimizeActionStage2::None => did_action = false,
-        }
-        
-        if did_action {
-            return true;
+            OptimizeActionStage2::DeleteIdentifier(id) => 
+                ir.retain_mut(|statement| !statement.delete_identifier(id)),
+            OptimizeActionStage2::SwapPrevious =>
+                ir.swap(statement_idx - 1, statement_idx),
+            OptimizeActionStage2::None =>
+                did_action = false,
         }
         
         statement_idx += 1;
 
+        if did_action {
+            return true;
+        }
     }
 
     false

@@ -26,37 +26,37 @@ macro_rules! tokens {
         vec![
             vec![],
             vec![
-                Token::Type(Type::Byte),
+                Token::Byte,
                 Token::Identifier("a".into())
             ],
             vec![
-                Token::Type(Type::Byte),
+                Token::Byte,
                 Token::Identifier("b".into())
             ],
             vec![
-                Token::Type(Type::Byte),
+                Token::Byte,
                 Token::Identifier("c".into())
             ],
             vec![],
             vec![
                 Token::Identifier("a".into()),
-                Token::BinaryOperator(BinaryOperator::SetTo),
-                Token::Literal(Literal::Number(240))
+                Token::SetTo,
+                Token::NumberLiteral(240)
             ],
             vec![
-                Token::Keyword(Keyword::Read),
+                Token::Read,
                 Token::Identifier("b".into())
             ],
             vec![],
             vec![
                 Token::Identifier("c".into()),
-                Token::BinaryOperator(BinaryOperator::SetTo),
+                Token::SetTo,
                 Token::Identifier("a".into()),
-                Token::BinaryOperator(BinaryOperator::Minus),
+                Token::Hypen,
                 Token::Identifier("b".into())
             ],
             vec![
-                Token::Keyword(Keyword::Write),
+                Token::Write,
                 Token::Identifier("c".into())
             ],
             vec![],

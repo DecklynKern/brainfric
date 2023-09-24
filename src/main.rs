@@ -88,7 +88,7 @@ fn main() -> std::io::Result<()> {
 
     args::parse_args();
 
-    let mut file = File::open("in.bfrc")?;
+    let mut file = File::open(args::arg_input_file())?;
 
     let mut code = String::new();
     file.read_to_string(&mut code)?;
@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
         }
     };
 
-    let mut file = File::create("out.bf")?;
+    let mut file = File::create(args::arg_output_file())?;
     file.write_all(compiled.as_bytes())?;
 
     Ok(())
