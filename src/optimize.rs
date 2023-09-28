@@ -190,45 +190,40 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::GuaranteeIf => {
 
-                if let IRStatement::Loop(_, mut block, true) = ir.remove(statement_idx) {
-
-                    while let Some(statement) = block.0.pop() {
-                        ir.insert(statement_idx, statement);
-                    }
-
-                } else {
+                let IRStatement::Loop(_, mut block, true) = ir.remove(statement_idx) else {
                     panic!("guarantee branch error");
                 }
 
+                while let Some(statement) = block.0.pop() {
+                    ir.insert(statement_idx, statement);
+                }
             }
             OptimizeActionStage1::OptimizeLoop => {
 
-                if let IRStatement::Loop(id, block, run_once) = &mut ir[statement_idx] {
-
-                    let mutated_identifiers = block.get_mutated_identifiers();
-
-                    if !*run_once {
-                        for address in &mutated_identifiers {
-                            known_values.insert(*address, None);
-                        }
-                    }
-                    
-                    did_action = optimize_pass_stage1(&mut block.0, known_values);
-
-                    if !did_action {
-                        did_action = optimize_pass_stage2(&mut block.0);
-                    }
-                    
-                    for mutated_id in &mutated_identifiers {
-                        known_values.insert(*mutated_id, None);
-                    }
-
-                    known_values.insert(*id, Some(0));
-
-                }
-                else {
+                let IRStatement::Loop(id, block, run_once) = &mut ir[statement_idx] else {
                     panic!("loop optimization error")
                 }
+
+                let mutated_identifiers = block.get_mutated_identifiers();
+
+                if !*run_once {
+                    for address in &mutated_identifiers {
+                        known_values.insert(*address, None);
+                    }
+                }
+                    
+                did_action = optimize_pass_stage1(&mut block.0, known_values);
+
+                if !did_action {
+                    did_action = optimize_pass_stage2(&mut block.0);
+                }
+                    
+                for mutated_id in &mutated_identifiers {
+                    known_values.insert(*mutated_id, None);
+                }
+
+                known_values.insert(*id, Some(0));
+                    
             }
             OptimizeActionStage1::CombineAdd(num, idx) => {
                 
@@ -254,23 +249,21 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::CombineMove(idx, id, replace_ids) => {
 
-                if let IRStatement::MoveCell(to, _) = &mut ir[idx] {
+                if let IRStatement::MoveCell(to, _) = &mut ir[idx] else {
+                    panic!("combine move fail");
+                }
                     
-                    let _ = mem::replace(
-                        to,
-                        to.iter()
-                            .cloned()
-                            .filter(|(addr, _)| *addr != id)
-                            .chain(replace_ids.iter().cloned())
-                            .collect::<Box<_>>()
-                    );
+                let _ = mem::replace(
+                    to,
+                    to.iter()
+                        .cloned()
+                        .filter(|(addr, _)| *addr != id)
+                        .chain(replace_ids.iter().cloned())
+                        .collect::<Box<_>>()
+                );
                     
-                    ir.remove(statement_idx);
+                ir.remove(statement_idx);
 
-                }
-                else {
-                    panic!("combine move fail")
-                }
             }
             OptimizeActionStage1::ReplaceStatement(new_statements) => {
 
