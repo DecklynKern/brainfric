@@ -216,79 +216,79 @@ impl StatementBody {
 
     fn try_parse(line_num: usize, tokens: &mut Peekable<Iter<Token>>) -> Result<Self, BrainFricError> {
         
-        let token1 = match tokens.peek() {
-            Some(&token) => token.clone(),
-            None => unreachable!()
+        let Some(token1) = tokens.peek().clone() else {
+            unreachable!()
         };
         
         if token1.is_type_head() {
-    
-            if let Some(data_type) = DataType::try_parse(tokens) && let Some(Token::Identifier(name)) = tokens.next() {
-                return Ok(Self::Declaration(name.clone(), data_type))
-            }
-            else {
+
+            let Some(data_type) = DataType::try_parse(tokens) && let Some(Token::Identifier(name)) = tokens.next() else {
                 err!(line_num, ParseError::InvalidExpression)
             }
+
+            return Ok(Self::Declaration(name.clone(), data_type));
+        
         }
 
         tokens.next();
 
-        let token2 = match tokens.next() {
-            Some(token) => token,
-            None => err!(line_num, ParseError::InvalidExpression)
+        let Some(token2) = tokens.next() else {
+            err!(line_num, ParseError::InvalidExpression)
         };
 
         Ok(match token1 {
 
             Token::Inc => {
-                if let Some(accessor) = Accessor::try_parse(tokens) {
-                    Self::Inc(accessor)
-                }
-                else {
+                
+                let Some(accessor) = Accessor::try_parse(tokens) else {
                     err!(line_num, ParseError::InvalidAccessor);
-                }
+                };
+                
+                Self::Inc(accessor)
+                
             }
             Token::Dec => {
-                if let Some(accessor) = Accessor::try_parse(tokens) {
-                    Self::Dec(accessor)
-                }
-                else {
+                
+                let Some(accessor) = Accessor::try_parse(tokens) else {
                     err!(line_num, ParseError::InvalidAccessor);
                 }
+                
+                Self::Dec(accessor)
+                
             }
             Token::Write => {
 
-                if let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() {
-                    Self::Write(expression)
-                }
-                else {
+                let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() else {
                     err!(line_num, ParseError::InvalidExpression);
                 }
+                
+                Self::Write(expression)
+                
             }
             Token::WriteLine => {
                 Self::Write(Expression::NumberLiteral(10))
             }
             Token::Read => {
-                if let Some(accessor) = Accessor::try_parse(tokens) {
-                    Self::Read(accessor)
-                }
-                else {
+                
+                let Some(accessor) = Accessor::try_parse(tokens) else {
                     err!(line_num, ParseError::InvalidAccessor);
-                }
+                };
+                
+                Self::Read(accessor)
+                
             }
             _ => {
 
-                if let Some(accessor) = Accessor::try_parse(tokens) && *token2 == Token::SetTo {
-                    if let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() {
-                        Self::SetTo(accessor, expression)
-                    }
-                    else {
-                        err!(line_num, ParseError::InvalidExpression);
-                    }
+                let Some(accessor) = Accessor::try_parse(tokens) && *token2 == Token::SetTo else {
+                    err!(line_num, ParseError::InvalidStatement);
                 }
-                else {
-                    err!(line_num, ParseError::InvalidStatement)
-                }             
+                
+                let Some(expression) = Expression::try_parse(tokens) && tokens.is_empty() else {
+                    err!(line_num, ParseError::InvalidExpression);
+                }
+           
+                Self::SetTo(accessor, expression)
+           
             }
         })
     }
@@ -297,36 +297,32 @@ impl StatementBody {
 
         condition_tokens.next();
 
-        if let Some(expression) = Expression::try_parse(condition_tokens) && condition_tokens.is_empty() {
+        let Some(expression) = Expression::try_parse(condition_tokens) && condition_tokens.is_empty() else {
+            err!(line_num, ParseError::InvalidExpression);
+        }
 
-            let mut loop_lines = Vec::new();
-            let mut loop_depth = 1;
+        let mut loop_lines = Vec::new();
+        let mut loop_depth = 1;
 
-            while loop_depth > 0 {
+        while loop_depth > 0 {
 
-                if let Some(line) = lines.pop() {
-
-                    match line[0] {
-                        Token::If | Token::While => loop_depth += 1,
-                        Token::End => loop_depth -= 1,
-                        _ => {}
-                    }
-
-                    loop_lines.push(line);
-
-                }
-                else {
-                    err!(line_num, ParseError::ExpectedEnd)
-                }
+            let Some(line) = lines.pop() else {
+                err!(line_num, ParseError::ExpectedEnd);
             }
 
-            loop_lines.pop();
-            Ok((expression, parse(loop_lines, line_num)?))
+            match line[0] {
+                Token::If | Token::While => loop_depth += 1,
+                Token::End => loop_depth -= 1,
+                 _ => {}
+            }
+
+            loop_lines.push(line);
+            
+        }
+
+        loop_lines.pop();
+        Ok((expression, parse(loop_lines, line_num)?))
         
-        }
-        else {
-            err!(line_num, ParseError::InvalidExpression)
-        }
     }
 }
 
@@ -378,7 +374,6 @@ pub fn parse(mut lines: Vec<Vec<Token>>, mut line_num: usize) -> Result<Vec<Stat
         if !line_tokens.is_empty() {
             err!(line_num, ParseError::InvalidStatement)
         }
-
     }
 
     Ok(statements)
