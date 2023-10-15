@@ -1,6 +1,18 @@
-stack<5> s
+byte a, b, c
 
-@s <- 3
+a <- 3
+b <- 4
+c <- a + b
+
+write a
+write b
+write c
+
+
+
+// stack<5> s
+
+// @s <- 3
 
 // read @s
 // write &s

@@ -57,7 +57,7 @@ enum OptimizeActionStage1 {
     ReplaceStatement(Box<[IRStatement]>),
     GuaranteeIf,
     CombineAdd(u8, usize),
-    CombineMove(usize, Identifier, Box<[(Identifier, bool)]>),
+    CombineMove(usize, MemoryAccess, Box<[(MemoryAccess, bool)]>),
     OptimizeLoop,
     None
 }
@@ -70,30 +70,30 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
             known_values.insert(allocation.get_identifier(), Some(0));
         }
         IRStatement::Free(_) => {}
-        IRStatement::AddConst(id, num) => {
+        IRStatement::AddConst(mem, num) => {
 
             if *num == 0 {
                 return OptimizeActionStage1::DeleteStatement;
             }
 
-            if let Some(next_reference_idx) = get_next_reference_idx(ir, *id, statement_idx) {
+            if let Some(next_reference_idx) = get_next_reference_idx(ir, mem.identifier, statement_idx) {
 
                 match &ir[next_reference_idx] {
                     IRStatement::AddConst(_, _) =>
                         return OptimizeActionStage1::CombineAdd(*num, next_reference_idx),
-                    IRStatement::MoveCell(_, from) if *id == *from => 
+                    IRStatement::MoveCell(_, from) if *mem == *from => 
                         return OptimizeActionStage1::CombineAdd(*num, next_reference_idx),
                     _ => {}
                 }
             }
 
-            if let Some(num2) = known_values[id] {
-                known_values.insert(*id, Some(num.overflowing_add(num2).0));
+            if let Some(num2) = known_values[&mem.identifier] {
+                known_values.insert(mem.identifier, Some(num.overflowing_add(num2).0));
             }
         }
         IRStatement::MoveCell(to, from) => {
 
-            if let Some(num) = known_values[from] {
+            if let Some(num) = known_values[&from.identifier] {
 
                 // technically the second branch handles both
                 // but this creates a lot less redundant passes
@@ -107,26 +107,26 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                     OptimizeActionStage1::ReplaceStatement(
                         to.iter()
                             .map(|(id, negate)| 
-                                IRStatement::AddConst(*id, if *negate {negated} else {num}))
-                            .chain([IRStatement::AddConst(*from, negated)])
+                                IRStatement::AddConst(id.clone(), if *negate {negated} else {num}))
+                            .chain([IRStatement::AddConst(from.clone(), negated)])
                             .collect()
                     )
                 };
             }
 
-            for (id, _) in to.iter() {
-                known_values.insert(*id, None);
+            for (mem, _) in to.iter() {
+                known_values.insert(mem.identifier, None);
             }
 
-            known_values.insert(*from, Some(0));
+            known_values.insert(from.identifier, Some(0));
 
             for check_idx in (0..statement_idx).rev() {
 
                 if let IRStatement::MoveCell(to2, from2) = &ir[check_idx] {
 
                     // add negation case eventually
-                    if to2.contains(&(*from, false)) && !to.iter().any(|(id, _)| id == from2) {
-                        return OptimizeActionStage1::CombineMove(check_idx, *from, to.clone());
+                    if to2.contains(&(from.clone(), false)) && !to.iter().any(|(id, _)| id == from2) {
+                        return OptimizeActionStage1::CombineMove(check_idx, from.clone(), to.clone());
                     }
 
                     if !to.is_empty() {
@@ -134,18 +134,18 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                     }
                 }
 
-                if ir[check_idx].references_identifier(*from) {
+                if ir[check_idx].references_identifier(from.identifier) {
                     break;
                 }
             }
         }
         IRStatement::WriteByte(_) => {},
-        IRStatement::ReadByte(id) => {
-            known_values.insert(*id, None);
+        IRStatement::ReadByte(mem) => {
+            known_values.insert(mem.identifier, None);
         }
-        IRStatement::Loop(id, block, run_once) => {
+        IRStatement::Loop(mem, block, run_once) => {
 
-            let known_value = known_values[id];
+            let known_value = known_values[&mem.identifier];
 
             // can maybe make loop optimization more powerful
             return if let Some(0) = known_value {
@@ -155,11 +155,11 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
 
                 let mut mutated_identifiers = block.get_mutated_identifiers();
 
-                if mutated_identifiers.remove(id) && mutated_identifiers.is_empty() && !block.contains_io() {
+                if mutated_identifiers.remove(&mem.identifier) && mutated_identifiers.is_empty() && !block.contains_io() {
                     OptimizeActionStage1::DeleteStatement
                 }
                 else {
-                    match known_values[id] {
+                    match known_values[&mem.identifier] {
                         Some(_) => OptimizeActionStage1::GuaranteeIf,
                         None => OptimizeActionStage1::OptimizeLoop
                     }
@@ -192,7 +192,7 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
 
                 let IRStatement::Loop(_, mut block, true) = ir.remove(statement_idx) else {
                     panic!("guarantee branch error");
-                }
+                };
 
                 while let Some(statement) = block.0.pop() {
                     ir.insert(statement_idx, statement);
@@ -200,9 +200,9 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::OptimizeLoop => {
 
-                let IRStatement::Loop(id, block, run_once) = &mut ir[statement_idx] else {
+                let IRStatement::Loop(mem, block, run_once) = &mut ir[statement_idx] else {
                     panic!("loop optimization error")
-                }
+                };
 
                 let mutated_identifiers = block.get_mutated_identifiers();
 
@@ -222,7 +222,7 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
                     known_values.insert(*mutated_id, None);
                 }
 
-                known_values.insert(*id, Some(0));
+                known_values.insert(mem.identifier, Some(0));
                     
             }
             OptimizeActionStage1::CombineAdd(num, idx) => {
@@ -238,7 +238,7 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
 
                         to.iter()
                             .rev()
-                            .map(|(id, negate)| IRStatement::AddConst(*id, if *negate {negated} else {num}))
+                            .map(|(mem, negate)| IRStatement::AddConst(mem.clone(), if *negate {negated} else {num}))
                             .collect()
                     }
                     _ => panic!("combine add fail")
@@ -249,9 +249,9 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
             }
             OptimizeActionStage1::CombineMove(idx, id, replace_ids) => {
 
-                if let IRStatement::MoveCell(to, _) = &mut ir[idx] else {
+                let IRStatement::MoveCell(to, _) = &mut ir[idx] else {
                     panic!("combine move fail");
-                }
+                };
                     
                 let _ = mem::replace(
                     to,
@@ -298,7 +298,7 @@ enum OptimizeActionStage2 {
 
 fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> OptimizeActionStage2 {
 
-    match ir[statement_idx] {
+    match &ir[statement_idx] {
 
         IRStatement::Alloc(allocation) => {
 
@@ -319,17 +319,12 @@ fn find_optimization_stage2(ir: &[IRStatement], statement_idx: usize) -> Optimiz
                 }
             }
         }
-        IRStatement::AddConst(access1, _) => {
-            
-            if statement_idx != 0 && let IRStatement::AddConst(access2, _) = ir[statement_idx - 1] {
-
+        _ => {
+            if statement_idx != 0 && ir[statement_idx].can_swap_previous(&ir[statement_idx - 1]) {
                 // bubble sort by a different means
-                if access1.get_identifier() < access2.get_identifier() {
-                    return OptimizeActionStage2::SwapPrevious;
-                }
+                return OptimizeActionStage2::SwapPrevious;
             }
         }
-        _ => {}
     }
 
     OptimizeActionStage2::None

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::parse::*;
 use crate::ir::*;
 
 pub fn lower(ir: Vec<IRStatement>) -> String {
@@ -21,46 +22,71 @@ struct Memory {
     size: usize
 }
 
-enum DataHeadState<'a> {
+enum DataHeadState {
     KnownCell(usize),
-    Special(&'a MemoryAccess)
+    Special(MemoryAccess)
 }
 
-struct Lowerer<'a> {
+struct Lowerer {
     bf_code: String,
-    data_head: DataHeadState<'a>,
+    data_head: DataHeadState,
     stack_pointer: usize,
     identifier_table: HashMap<Identifier, Memory>
 }
 
-impl<'a> Lowerer<'a> {
+impl Lowerer {
 
     fn prepare_access(&mut self, access: &MemoryAccess) {
-        match access {
-            MemoryAccess::StackPush(_) => {
-                self.jump_to(access);
-                self.bf_code.push('+');
-                self.return_to_known_cell();
+
+        for specifier in access.specifiers.iter() {
+            match specifier {
+                Specifier::StackTop => todo!()
             }
-            _ => {}
         }
+        
+        // match access {
+        //     MemoryAccess::StackPush(_) => {
+        //         self.jump_to(access);
+        //         self.bf_code.push('+');
+        //         self.return_to_known_cell();
+        //     }
+        //     _ => {}
+        // }
     }
 
-    fn return_to_known_cell(&mut self) {
-        match self.data_head {
-            DataHeadState::KnownCell(_) => {}
-            DataHeadState::Special(MemoryAccess::Identifier(id)) => {
-                self.data_head = DataHeadState::KnownCell(self.identifier_table[id].address)
-            }
-            DataHeadState::Special(MemoryAccess::StackPush(access)) => {
-                self.bf_code.push_str("[<]<<");
-                self.data_head = DataHeadState::Special(access);
-                self.return_to_known_cell();
-            }
-            DataHeadState::Special(MemoryAccess::StackPop(access)) => {
-                
+    fn cleanup_access(&mut self, access: &MemoryAccess) {
+
+        for specifier in access.specifiers.iter() {
+            match specifier {
+                Specifier::StackTop => todo!()
             }
         }
+
+        // match access {
+        //     MemoryAccess::StackPush(_) => {
+        //         self.jump_to(access);
+        //         self.bf_code.push('-');
+        //         self.return_to_known_cell();
+        //     }
+        //     _ => {}
+        // }
+    }
+
+
+    fn return_to_known_cell(&mut self) {
+
+        let DataHeadState::Special(mem) = &self.data_head else {
+            return;
+        };
+
+        for specifier in mem.specifiers.iter().rev() {
+            match specifier {
+                Specifier::StackTop => todo!()
+            }
+        }
+
+        self.data_head = DataHeadState::KnownCell(self.identifier_table[&mem.identifier].address);
+
     }
 
     fn jump_diff(&mut self, from: usize, to: usize) {
@@ -89,42 +115,26 @@ impl<'a> Lowerer<'a> {
         );
     }
 
-    fn jump_inner(&mut self, access: &'a MemoryAccess) {
+    fn jump_inner(&mut self, mem: MemoryAccess) {
 
-        match access {
-            MemoryAccess::Identifier(id) => {
-                if let DataHeadState::KnownCell(current_position) = self.data_head {
-                    let id_address = self.identifier_table[&id].address;
-                    self.jump_diff(current_position, id_address);
-                    self.data_head = DataHeadState::KnownCell(id_address);
-                }
-                else {
-                    unreachable!();
-                }
+        let DataHeadState::KnownCell(current_position) = self.data_head else {
+            unreachable!();
+        };
+        
+        let id_address = self.identifier_table[&mem.identifier].address;
+        self.jump_diff(current_position, id_address);
+        self.data_head = DataHeadState::KnownCell(id_address);
+
+        for specifier in mem.specifiers.iter() {
+            match specifier {
+                Specifier::StackTop => todo!()
             }
-            MemoryAccess::StackPush(inner_access) => {
-                self.jump_inner(inner_access);
-                self.bf_code.push_str(">>[>]<");
-            }
-            _ => todo!()
         }
     }
 
-    fn jump_to(&mut self, access: &'a MemoryAccess) {
+    fn jump_to(&mut self, access: MemoryAccess) {
         self.return_to_known_cell();
         self.jump_inner(access);
-    }
-
-    fn cleanup_access(&mut self, access: &MemoryAccess) {
-
-        match access {
-            MemoryAccess::StackPush(_) => {
-                self.jump_to(access);
-                self.bf_code.push('-');
-                self.return_to_known_cell();
-            }
-            _ => {}
-        }
     }
 
     fn lower_statements(&mut self, ir: Vec<IRStatement>) {
@@ -155,7 +165,7 @@ impl<'a> Lowerer<'a> {
                 }
                 IRStatement::AddConst(access, num) => {
                     
-                    self.jump_to(&access);
+                    self.jump_to(access);
 
                     self.bf_code.push_str(&
                         if num > 127 {
@@ -168,31 +178,31 @@ impl<'a> Lowerer<'a> {
                 }
                 IRStatement::MoveCell(to, from) => {
 
-                    self.jump_to(&from);
+                    self.jump_to(from.clone());
                     self.bf_code.push_str("[-");
 
                     for (reg, negate) in to.iter() {
-                        self.jump_to(reg);
+                        self.jump_to(reg.clone());
                         self.bf_code.push(if *negate {'-'} else {'+'});
                     }
 
-                    self.jump_to(&from);
+                    self.jump_to(from);
                     self.bf_code.push(']');
 
                 }
                 IRStatement::ReadByte(access) => {
-                    self.jump_to(&access);
+                    self.jump_to(access);
                     self.bf_code.push(',');
                 }
                 IRStatement::WriteByte(access) => {
-                    self.jump_to(&access);
+                    self.jump_to(access);
                     self.bf_code.push('.');
                 }
                 IRStatement::Loop(access, block, _) => {
-                    self.jump_to(&access);
+                    self.jump_to(access.clone());
                     self.bf_code.push('[');
                     self.lower_statements(block.0);
-                    self.jump_to(&access);
+                    self.jump_to(access);
                     self.bf_code.push(']');
                 }
             }

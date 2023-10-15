@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::mem;
+use std::mem::{swap, take, replace};
 
 use crate::args::arg_allow_delete_variables;
 use crate::error::*;
@@ -38,21 +38,24 @@ impl Allocation {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum MemoryAccess {
-    Identifier(Identifier),
-    StackPush(Box<MemoryAccess>),
-    StackPop(Box<MemoryAccess>)
+#[derive(PartialEq, Eq, Clone)]
+pub struct MemoryAccess {
+    pub identifier: Identifier,
+    pub specifiers: Box<[Specifier]>
+}
+
+impl std::fmt::Debug for MemoryAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MemAccess({}, {:?})", self.identifier, self.specifiers)
+    }
 }
 
 impl MemoryAccess {
 
-    pub fn get_identifier(&self) -> Identifier {
-        match self {
-            Self::Identifier(id) =>
-                *id,
-            Self::StackPush(access) | Self::StackPop(access) =>
-                access.get_identifier()
+    pub fn from_identifier(id: Identifier) -> Self {
+        Self {
+            identifier: id,
+            specifiers: Box::new([])
         }
     }
 }
@@ -129,12 +132,12 @@ impl IRStatement {
         match self {
             Self::Alloc(_) | Self::Free(_) | Self::WriteByte(_) | Self::ReadByte(_) =>
                 HashSet::new(),
-            Self::AddConst(access, _) => {
-                HashSet::from([access.get_identifier()])
+            Self::AddConst(mem, _) => {
+                HashSet::from([mem.identifier])
             }
             Self::MoveCell(to, from) => {
-                let mut ids = HashSet::from_iter(to.iter().map(|cell| cell.0.get_identifier()));
-                ids.insert(from.get_identifier());
+                let mut ids = HashSet::from_iter(to.iter().map(|cell| cell.0.identifier));
+                ids.insert(from.identifier);
                 ids
             }
             Self::Loop(_, block, _) =>
@@ -146,11 +149,11 @@ impl IRStatement {
 
         match self {
             Self::MoveCell(_, from)  =>
-                from.get_identifier() == id,
-            Self::WriteByte(access) | Self::ReadByte(access) =>
-                access.get_identifier() == id,
-            Self::Loop(access, block, _) =>
-                access.get_identifier() == id || block.reads_identifier_value(id),
+                from.identifier == id,
+            Self::WriteByte(mem) | Self::ReadByte(mem) =>
+                mem.identifier == id,
+            Self::Loop(mem, block, _) =>
+                mem.identifier == id || block.reads_identifier_value(id),
             Self::Alloc(_) | Self::AddConst(_, _) | Self::Free(_) =>
                 false
         }
@@ -160,57 +163,57 @@ impl IRStatement {
 
         match self {
             Self::MoveCell(to, from) =>
-                from.get_identifier() == id || to.iter().any(|cell| cell.0.get_identifier() == id),
-            Self::Alloc(mem) =>
-                mem.get_identifier() == id,
-            Self::AddConst(access, _) | Self::WriteByte(access) |
-            Self::ReadByte(access) =>
-                access.get_identifier() == id,
+                from.identifier == id || to.iter().any(|cell| cell.0.identifier == id),
+            Self::Alloc(alloc) =>
+                alloc.get_identifier() == id,
+            Self::AddConst(mem, _) | Self::WriteByte(mem) |
+            Self::ReadByte(mem) =>
+                mem.identifier == id,
             Self::Free(check_id) =>
                 *check_id == id,
             Self::Loop(check_id, block, _) =>
-                check_id.get_identifier() == id || block.references_identifier(id)
+                check_id.identifier == id || block.references_identifier(id)
         }
     }
 
     pub fn delete_identifier(&mut self, id: Identifier) -> bool {
 
         match self {
-            Self::Alloc(mem) =>
-                mem.get_identifier() == id,
-            Self::AddConst(access, _) =>
-                access.get_identifier() == id,
+            Self::Alloc(alloc) =>
+                alloc.get_identifier() == id,
+            Self::AddConst(mem, _) =>
+                mem.identifier == id,
             Self::Free(check_id) =>
                 *check_id == id,
             Self::MoveCell(to, from) => {
 
-                if from.get_identifier() == id {
+                if from.identifier == id {
                     panic!("attempted to delete used value")
                 }
 
-                let _ = mem::replace(
+                let _ = replace(
                     to,
                     to.iter()
                         .cloned()
-                        .filter(|temp| temp.0.get_identifier() != id)
+                        .filter(|temp| temp.0.identifier != id)
                         .collect::<Box<_>>()
                 );
 
                 false
 
             }
-            Self::WriteByte(access) | Self::ReadByte(access) => {
+            Self::WriteByte(mem) | Self::ReadByte(mem) => {
 
-                if access.get_identifier() == id {
+                if mem.identifier == id {
                     panic!("attempted to delete used value")
                 }
                     
                 false
 
             }
-            Self::Loop(access, block, _) => {
+            Self::Loop(mem, block, _) => {
 
-                if access.get_identifier() == id {
+                if mem.identifier == id {
                     panic!("attempted to delete used value")
                 }
 
@@ -221,6 +224,24 @@ impl IRStatement {
             }
         }
     }
+
+    fn get_unitary_identifier(&self) -> Option<Identifier> {
+        
+        match self {
+            Self::Alloc(alloc) => Some(alloc.get_identifier()),
+            Self::AddConst(mem, _) | Self::WriteByte(mem) => Some(mem.identifier),
+            _ => None
+        }
+    }
+
+    pub fn can_swap_previous(&self, previous: &Self) -> bool {
+
+        self.get_unitary_identifier().is_some_and(
+            |id_this| previous.get_unitary_identifier().is_some_and(
+                |id_other| id_this < id_other
+            )
+        )
+    }
 }
 
 pub fn generate_ir(statements: Vec<Statement>) -> Result<IRBlock, BrainFricError> {
@@ -229,7 +250,7 @@ pub fn generate_ir(statements: Vec<Statement>) -> Result<IRBlock, BrainFricError
         loop_stack: Vec::new(),
         ir: IRBlock::new(),
         current_line_num: 0,
-        next_identifier: 0,
+        next_identifier: 1,
         name_table: HashMap::new()
     };
 
@@ -248,29 +269,20 @@ struct IRGenerator {
 impl IRGenerator {
 
     fn do_free(&mut self, id: Identifier) {
-        self.do_clear(MemoryAccess::Identifier(id));
+        self.do_clear(MemoryAccess::from_identifier(id));
         self.ir.0.push(IRStatement::Free(id));
     }
 
-    fn do_free_access(&mut self, access: MemoryAccess) {
-        self.do_free(access.get_identifier());
+    fn do_free_access(&mut self, mem: MemoryAccess) {
+        self.do_free(mem.identifier);
     }
 
-    fn try_free_access(&mut self, access: MemoryAccess, is_temp: bool) {
+    fn try_free_access(&mut self, mem: MemoryAccess, is_temp: bool) {
         if is_temp {
-            let id = access.get_identifier();
-            self.do_clear(MemoryAccess::Identifier(id));
+            let id = mem.identifier;
+            self.do_clear(MemoryAccess::from_identifier(id));
             self.ir.0.push(IRStatement::Free(id));
         }
-    } 
-
-    fn get_name(&self, name: &Name) -> Result<(MemoryAccess, DataType), BrainFricError> {
-        self.name_table.get(name.as_ref()).map_or_else(
-            ||
-                err!(self.current_line_num, IRError::UnknownIdentifier(name.clone())),
-            |(id, data_type)|
-                Ok((MemoryAccess::Identifier(*id), data_type.clone()))
-        )
     }
 
     fn assert_data_type(&self, expected_type: &DataType, got_type: &DataType) -> Result<(), BrainFricError> {
@@ -285,212 +297,212 @@ impl IRGenerator {
 
     fn allocate_temporary(&mut self) -> MemoryAccess {
         
-        let mem = Allocation::Temporary(self.next_identifier);
-        self.ir.0.push(IRStatement::Alloc(mem));
-
+        let alloc = Allocation::Temporary(self.next_identifier);
+        self.ir.0.push(IRStatement::Alloc(alloc));
+        
         self.next_identifier += 1;
-        MemoryAccess::Identifier(mem.get_identifier())
-
+        MemoryAccess::from_identifier(self.next_identifier - 1)
+        
     }
 
     fn allocate_variable(&mut self, name: Name, data_type: DataType) -> MemoryAccess {
-
-        let mem = Allocation::Variable(self.next_identifier, data_type);
-        self.ir.0.push(IRStatement::Alloc(mem));
+        
+        self.ir.0.push(IRStatement::Alloc(Allocation::Variable(self.next_identifier, data_type.clone())));
+        self.name_table.insert(name, (self.next_identifier, data_type));
 
         self.next_identifier += 1;
-        MemoryAccess::Identifier(mem.get_identifier())
+        MemoryAccess::from_identifier(self.next_identifier - 1)
 
     }
 
-    fn convert_accessor(&self, accessor: Accessor) -> Result<(MemoryAccess, DataType), BrainFricError> {
+    fn resolve_accessor(&self, accessor: Accessor) -> Result<(MemoryAccess, DataType), BrainFricError> {
 
-        Ok(match accessor {
-            Accessor::Identifier(name) => self.get_name(&name)?,
-            Accessor::Push(inner_accessor) => {
-                let (access, data_type) = self.convert_accessor(*inner_accessor)?;
-                (MemoryAccess::StackPush(Box::new(access)), data_type)
+        let (id, mut data_type) = self.name_table.get(accessor.identifier.as_ref()).map_or_else(
+            ||
+                err!(self.current_line_num, IRError::UnknownIdentifier(accessor.identifier)),
+            |(id, data_type)|
+                Ok((id, data_type.clone()))
+        )?;
+
+        for specifier in accessor.specifiers.iter() {
+            match (specifier, data_type) {
+                (Specifier::StackTop, DataType::Stack(_)) => {
+                    data_type = DataType::Byte;
+                }
+                _ => todo!("bad access")
             }
-            Accessor::Pop(inner_accessor) => {
-                let (access, data_type) = self.convert_accessor(*inner_accessor)?;
-                (MemoryAccess::StackPop(Box::new(access)), data_type)
-            }
-        })
+        }
+
+        Ok((
+            MemoryAccess {
+                identifier: *id,
+                specifiers: accessor.specifiers
+            },
+            data_type
+        ))
     }
 
-    fn assert_can_read(&self, access: &MemoryAccess) -> Result<(), BrainFricError> {
-        if !matches!(access, MemoryAccess::StackPush(_)) {
-            Ok(())
-        }
-        else {
-            err!(self.current_line_num, IRError::ExpectedReadableAccess)
-        }
+    fn assert_can_read(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
+        Ok(())
+        // ?
     }
 
-    fn assert_can_write(&self, access: &MemoryAccess) -> Result<(), BrainFricError> {
-        if !matches!(access, MemoryAccess::StackPop(_)) {
-            Ok(())
-        }
-        else {
-            err!(self.current_line_num, IRError::ExpectedWriteableAccess)
-        }
+    fn assert_can_write(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
+        Ok(())
+        // ?
     }
 
-    fn assert_can_modify(&self, access: &MemoryAccess) -> Result<(), BrainFricError> {
-        if matches!(access, MemoryAccess::Identifier(_)) {
-            Ok(())
-        }
-        else {
-            err!(self.current_line_num, IRError::ExpectedModifyableAccess)
-        }
+    fn assert_can_modify(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
+        Ok(())
+        // ?
     }
 
-    fn do_move_raw(&mut self, to: &[(MemoryAccess, bool)], from: MemoryAccess) {
+    fn do_move_raw<const N: usize>(&mut self, to: [(MemoryAccess, bool); N], from: MemoryAccess) {
         self.ir.0.push(IRStatement::MoveCell(
             to.iter()
-                .map(|(mem, negate)| (*mem, *negate))
+                .map(|(mem, negate)| (mem.clone(), *negate))
                 .collect(),
             from)
         )
     }
 
-    fn do_move(&mut self, to: &[MemoryAccess], from: MemoryAccess) {
+    fn do_move<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess) {
         self.ir.0.push(IRStatement::MoveCell(
-            to.iter().map(|access| (*access, false)).collect(),
+            to.into_iter().map(|mem| (mem, false)).collect(),
             from
         ));
     }
 
-    fn do_move_negative(&mut self, to: &[MemoryAccess], from: MemoryAccess) {
+    fn do_move_negative<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess) {
         self.ir.0.push(IRStatement::MoveCell(
-            to.iter().map(|access| (*access, true)).collect(),
+            to.into_iter().map(|mem| (mem, true)).collect(),
             from
         ));
     }
 
     fn do_copy(&mut self, to: MemoryAccess, from: MemoryAccess) {
         let temp = self.allocate_temporary();
-        self.do_move(&[temp, to], from);
-        self.do_move(&[from], temp);
-        self.do_free(temp.get_identifier());
+        self.do_move([temp.clone(), to], from.clone());
+        self.do_move([from], temp.clone());
+        self.do_free(temp.identifier);
     }
 
     fn do_copy_negative(&mut self, to: MemoryAccess, from: MemoryAccess) {
         let temp = self.allocate_temporary();
-        self.do_move(&[temp], from);
-        self.do_move_negative(&[from, to], temp);
-        self.do_free(temp.get_identifier());
+        self.do_move([temp.clone()], from.clone());
+        self.do_move_negative([from, to], temp.clone());
+        self.do_free(temp.identifier);
     }
 
-    fn do_clear(&mut self, access: MemoryAccess) {
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), access));
+    fn do_clear(&mut self, mem: MemoryAccess) {
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem));
     }
 
-    fn do_add_const(&mut self, access: MemoryAccess, val: u8) {
-        self.ir.0.push(IRStatement::AddConst(access, val));
+    fn do_add_const(&mut self, mem: MemoryAccess, val: u8) {
+        self.ir.0.push(IRStatement::AddConst(mem, val));
     }
 
-    fn do_sub_const(&mut self, access: MemoryAccess, val: u8) {
-        self.do_add_const(access, val.wrapping_neg());
+    fn do_sub_const(&mut self, mem: MemoryAccess, val: u8) {
+        self.do_add_const(mem, val.wrapping_neg());
     }
 
-    fn do_write(&mut self, access: MemoryAccess) {
-        self.ir.0.push(IRStatement::WriteByte(access));
+    fn do_write(&mut self, mem: MemoryAccess) {
+        self.ir.0.push(IRStatement::WriteByte(mem));
     }
 
-    fn do_read(&mut self, access: MemoryAccess) {
-        self.ir.0.push(IRStatement::ReadByte(access));
+    fn do_read(&mut self, mem: MemoryAccess) {
+        self.ir.0.push(IRStatement::ReadByte(mem));
     }
 
     fn do_begin_loop(&mut self) {
-        self.loop_stack.push(mem::take(&mut self.ir));
+        self.loop_stack.push(take(&mut self.ir));
     }
 
-    fn do_end_loop(&mut self, access: MemoryAccess, is_if: bool) {
-        mem::swap(&mut self.ir, self.loop_stack.last_mut().unwrap());
-        self.ir.0.push(IRStatement::Loop(access, self.loop_stack.pop().unwrap(), is_if));
+    fn do_end_loop(&mut self, mem: MemoryAccess, is_if: bool) {
+        swap(&mut self.ir, self.loop_stack.last_mut().unwrap());
+        self.ir.0.push(IRStatement::Loop(mem, self.loop_stack.pop().unwrap(), is_if));
     }
 
-    fn evaluate_bool_expression_into(&mut self, expression: &Expression, into: MemoryAccess) -> Result<(), BrainFricError> {
+    fn evaluate_bool_expression_into(&mut self, expression: Expression, into: MemoryAccess) -> Result<(), BrainFricError> {
 
         match expression {
 
-            Expression::Access(Accessor::Identifier(name)) => {
-                let (var, data_type) = self.get_name(name)?;
-                self.do_copy(into, var);
+            Expression::Access(accessor) => {
+                let (mem, data_type) = self.resolve_accessor(accessor)?;
                 self.assert_data_type(&DataType::Bool, &data_type)?;
+                self.do_copy(into, mem);
             }
             Expression::BoolLiteral(value) => {
-                self.do_add_const(into, *value as u8);
+                self.do_add_const(into, value as u8);
             }
             Expression::AsBool(expr) => {
 
-                let (access, is_temp) = self.evaluate_expression(expr, &DataType::Byte)?;
+                let (mem, is_temp) = self.evaluate_expression(*expr, &DataType::Byte)?;
                 let temp = self.allocate_temporary();
 
-                self.do_move(&[into, temp], access);
-                self.do_move(&[access], into);
+                self.do_move([into.clone(), temp.clone()], mem.clone());
+                self.do_move([mem.clone()], into.clone());
 
                 self.do_begin_loop();
                 self.do_add_const(into, 1);
-                self.do_clear(temp);
-                self.do_end_loop(temp, true);
+                self.do_clear(temp.clone());
+                self.do_end_loop(temp.clone(), true);
                 
-                self.do_free(temp.get_identifier());
-                self.try_free_access(access, is_temp);
+                self.do_free(temp.identifier);
+                self.try_free_access(mem, is_temp);
 
             }
             Expression::Not(expr) => {
 
                 let temp = self.allocate_temporary();
-                self.evaluate_bool_expression_into(expr, temp)?;
+                self.evaluate_bool_expression_into(*expr, temp.clone())?;
 
-                self.do_add_const(into, 1);
+                self.do_add_const(into.clone(), 1);
 
                 self.do_begin_loop();
-                self.do_sub_const(temp, 1);
+                self.do_sub_const(temp.clone(), 1);
                 self.do_sub_const(into, 1);
-                self.do_end_loop(temp, true);
+                self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.get_identifier());
+                self.do_free(temp.identifier);
 
             }
             Expression::And(expr1, expr2) => {
 
-                let (access1, is_temp1) = self.evaluate_expression(expr1, &DataType::Bool)?;
-                let (access2, is_temp2) = self.evaluate_expression(expr2, &DataType::Bool)?;
+                let (mem1, is_temp1) = self.evaluate_expression(*expr1, &DataType::Bool)?;
+                let (mem2, is_temp2) = self.evaluate_expression(*expr2, &DataType::Bool)?;
 
                 let temp = self.allocate_temporary();
 
-                self.do_copy(temp, access2);
+                self.do_copy(temp.clone(), mem2.clone());
 
                 self.do_begin_loop();
-                self.do_copy(into, access1);
-                self.do_sub_const(temp, 1);
-                self.do_end_loop(temp, true);
+                self.do_copy(into, mem1.clone());
+                self.do_sub_const(temp.clone(), 1);
+                self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.get_identifier());
-                self.try_free_access(access2, is_temp2);
-                self.try_free_access(access1, is_temp1);
+                self.do_free(temp.identifier);
+                self.try_free_access(mem2, is_temp2);
+                self.try_free_access(mem1, is_temp1);
 
             }
             Expression::Or(expr1, expr2) => {
 
-                let (access1, is_temp1) = self.evaluate_expression(expr1, &DataType::Bool)?;
-                let (access2, is_temp2) = self.evaluate_expression(expr2, &DataType::Bool)?;
+                let (mem1, is_temp1) = self.evaluate_expression(*expr1, &DataType::Bool)?;
+                let (mem2, is_temp2) = self.evaluate_expression(*expr2, &DataType::Bool)?;
 
                 let temp = self.allocate_temporary();
-                self.do_copy(temp, access1);
-                self.do_copy(temp, access2);
+                self.do_copy(temp.clone(), mem1.clone());
+                self.do_copy(temp.clone(), mem2.clone());
 
                 self.do_begin_loop();
                 self.do_add_const(into, 1);
-                self.do_clear(temp);
-                self.do_end_loop(temp, true);
+                self.do_clear(temp.clone());
+                self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.get_identifier());
-                self.try_free_access(access2, is_temp2);
-                self.try_free_access(access1, is_temp1);
+                self.do_free(temp.identifier);
+                self.try_free_access(mem2, is_temp2);
+                self.try_free_access(mem1, is_temp1);
 
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Bool))
@@ -500,66 +512,64 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_byte_expression_into(&mut self, expression: &Expression, into: MemoryAccess, negate: bool) -> Result<(), BrainFricError> {
+    fn evaluate_byte_expression_into(&mut self, expression: Expression, into: MemoryAccess, negate: bool) -> Result<(), BrainFricError> {
 
         match expression {
 
-            Expression::Access(Accessor::Identifier(name)) => {
-
-                let (var, data_type) = self.get_name(name)?;
+            Expression::Access(accessor) => {
+                
+                let (mem, data_type) = self.resolve_accessor(accessor)?;
+                self.assert_data_type(&DataType::Byte, &data_type)?;
 
                 if negate {
-                    self.do_copy_negative(into, var);
+                    self.do_copy_negative(into, mem);
                 }
                 else {
-                    self.do_copy(into, var);
+                    self.do_copy(into, mem);
                 }
-
-                self.assert_data_type(&DataType::Byte, &data_type)?;
-                
             }
             Expression::AsNum(expr) => {
-                self.evaluate_bool_expression_into(expr, into)?;
+                self.evaluate_bool_expression_into(*expr, into)?;
             }
             Expression::NumberLiteral(value) => {
                 if negate {
-                    self.do_sub_const(into, *value as u8);
+                    self.do_sub_const(into, value as u8);
                 }
                 else {
-                    self.do_add_const(into, *value as u8);
+                    self.do_add_const(into, value as u8);
                 }
             }
             Expression::Add(expr1, expr2) => {
-                self.evaluate_byte_expression_into(expr1, into, negate)?;
-                self.evaluate_byte_expression_into(expr2, into, negate)?;
+                self.evaluate_byte_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_byte_expression_into(*expr2, into, negate)?;
             }
             Expression::Subtract(expr1, expr2) => {
-                self.evaluate_byte_expression_into(expr1, into, negate)?;
-                self.evaluate_byte_expression_into(expr2, into, !negate)?;
+                self.evaluate_byte_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_byte_expression_into(*expr2, into, !negate)?;
             }
             Expression::Multiply(expr1, expr2) => {
 
                 let temp1 = self.allocate_temporary();
-                self.evaluate_byte_expression_into(expr1, temp1, false)?;
+                self.evaluate_byte_expression_into(*expr1, temp1.clone(), false)?;
 
                 let temp2 = self.allocate_temporary();
-                self.evaluate_byte_expression_into(expr2, temp2, false)?;
+                self.evaluate_byte_expression_into(*expr2, temp2.clone(), false)?;
 
                 let temp3 = self.allocate_temporary();
 
                 self.do_begin_loop();
 
                 if negate {
-                    self.do_move_raw(&[(into, true), (temp3, false)], temp1);
+                    self.do_move_raw([(into, true), (temp3.clone(), false)], temp1.clone());
                 }
                 else {
-                    self.do_move(&[into, temp3], temp1);
+                    self.do_move([into, temp3.clone()], temp1.clone());
                 }
 
-                self.do_move(&[temp1], temp3);
+                self.do_move([temp1.clone()], temp3.clone());
 
-                self.do_sub_const(temp2, 1);
-                self.do_end_loop(temp2, false);
+                self.do_sub_const(temp2.clone(), 1);
+                self.do_end_loop(temp2.clone(), false);
 
                 self.do_free_access(temp3);
                 self.do_free_access(temp2);
@@ -573,7 +583,7 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_expression_into(&mut self, expression: &Expression, expected_type: &DataType, into: MemoryAccess) -> Result<(), BrainFricError> {
+    fn evaluate_expression_into(&mut self, expression: Expression, expected_type: &DataType, into: MemoryAccess) -> Result<(), BrainFricError> {
 
         match expected_type {
             DataType::Bool =>
@@ -584,17 +594,17 @@ impl IRGenerator {
         }
     }
 
-    fn evaluate_expression(&mut self, expression: &Expression, expected_type: &DataType) -> Result<(MemoryAccess, bool), BrainFricError> {
+    fn evaluate_expression(&mut self, expression: Expression, expected_type: &DataType) -> Result<(MemoryAccess, bool), BrainFricError> {
         
         Ok(match expression {
-            Expression::Access(Accessor::Identifier(name)) => {
-                let (mem, data_type) = self.get_name(name)?;
+            Expression::Access(accessor) => {
+                let (mem, data_type) = self.resolve_accessor(accessor)?;
                 self.assert_data_type(expected_type, &data_type)?;
                 (mem, false)
             }
             _ => {
                 let mem = self.allocate_temporary();
-                self.evaluate_expression_into(expression, expected_type, mem)?;
+                self.evaluate_expression_into(expression, expected_type, mem.clone())?;
                 (mem, true)
             }
         })
@@ -610,28 +620,30 @@ impl IRGenerator {
             
             match statement.body {
 
-                StatementBody::Declaration(name, data_type) => {
-                    self.allocate_variable(name, data_type);
+                StatementBody::Declaration(names, data_type) => {
+                    for name in names {
+                        self.allocate_variable(name, data_type.clone());
+                    }
                 }
                 StatementBody::SetTo(accessor, expression) => {
-                    let (access, data_type) = self.convert_accessor(accessor)?;
-                    self.assert_can_write(&access)?;
-                    self.do_clear(access);
-                    self.evaluate_expression_into(&expression, &data_type, access)?;
+                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    self.assert_can_write(&mem)?;
+                    self.do_clear(mem.clone());
+                    self.evaluate_expression_into(expression, &data_type, mem)?;
 
                 }
                 StatementBody::Inc(accessor) => {
-                    let (access, data_type) = self.convert_accessor(accessor)?;
-                    self.assert_can_modify(&access);
+                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    self.assert_can_modify(&mem)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
-                    self.do_add_const(access, 1);
+                    self.do_add_const(mem, 1);
 
                 }
                 StatementBody::Dec(accessor) => {
-                    let (access, data_type) = self.convert_accessor(accessor)?;
-                    self.assert_can_modify(&access);
+                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    self.assert_can_modify(&mem)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
-                    self.do_sub_const(access, 1);
+                    self.do_sub_const(mem, 1);
                 }
                 StatementBody::Write(expression) => {
 
@@ -642,8 +654,8 @@ impl IRGenerator {
                         let mut val = 0u8;
 
                         for chr in literal.chars() {
-                            self.do_add_const(temp, (chr as u8).wrapping_sub(val));
-                            self.do_write(temp);
+                            self.do_add_const(temp.clone(), (chr as u8).wrapping_sub(val));
+                            self.do_write(temp.clone());
                             val = chr as u8;
                         }
 
@@ -652,13 +664,13 @@ impl IRGenerator {
                     
                     }
 
-                    let (access, is_temp) = self.evaluate_expression(&expression, &DataType::Byte)?;
-                    self.do_write(access);
-                    self.try_free_access(access, is_temp);
+                    let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;
+                    self.do_write(mem.clone());
+                    self.try_free_access(mem, is_temp);
 
                 }
                 StatementBody::Read(accessor) => {
-                    let (access, data_type) = self.convert_accessor(accessor)?;
+                    let (access, data_type) = self.resolve_accessor(accessor)?;
                     self.assert_can_write(&access)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_read(access);
@@ -666,58 +678,60 @@ impl IRGenerator {
                 StatementBody::While(expression, loop_statements) => {
 
                     // optimization for special case
-                    if let Expression::AsBool(box Expression::Access(Accessor::Identifier(name))) = &expression {
+                    // also add for bool variable??
+                    if let Expression::AsBool(box Expression::Access(accessor)) = expression {
 
-                        let (var, _) = self.get_name(name)?;
+                        let (mem, data_type) = self.resolve_accessor(accessor)?;
+                        self.assert_data_type(&data_type, &DataType::Bool)?;
                         
                         self.do_begin_loop();
                         let loop_ir = self.generate_ir(loop_statements)?;
                         self.ir.0.extend(loop_ir.0); 
-                        self.do_end_loop(var, false);
+                        self.do_end_loop(mem, false);
 
                         continue;
 
                     }
 
-                    let (access1, is_temp1) = self.evaluate_expression(&expression, &DataType::Bool)?;
+                    let (mem1, is_temp1) = self.evaluate_expression(expression.clone(), &DataType::Bool)?;
 
                     self.do_begin_loop();
 
                     let loop_ir = self.generate_ir(loop_statements)?;
                     self.ir.0.extend(loop_ir.0);
 
-                    let (access2, is_temp2) = self.evaluate_expression(&expression, &DataType::Bool)?;
+                    let (mem2, is_temp2) = self.evaluate_expression(expression, &DataType::Bool)?;
 
-                    if access1 != access2 {
-                        self.do_move(&[access1], access2);
+                    if mem1 != mem2 {
+                        self.do_move([mem1.clone()], mem2.clone());
                     }
 
-                    self.do_end_loop(access1, false);
+                    self.do_end_loop(mem1.clone(), false);
 
-                    self.try_free_access(access2, is_temp2);
-                    self.try_free_access(access1, is_temp1);
+                    self.try_free_access(mem2, is_temp2);
+                    self.try_free_access(mem1, is_temp1);
 
                 }
                 StatementBody::If(expression, loop_statements) => {
 
                     let temp = self.allocate_temporary();
-                    self.evaluate_bool_expression_into(&expression, temp)?;
+                    self.evaluate_bool_expression_into(expression, temp.clone())?;
                     
                     self.do_begin_loop();
 
                     let loop_ir = self.generate_ir(loop_statements)?;
                     self.ir.0.extend(loop_ir.0);
 
-                    self.do_clear(temp);
-                    self.do_end_loop(temp, true);
+                    self.do_clear(temp.clone());
+                    self.do_end_loop(temp.clone(), true);
 
-                    self.do_free(temp.get_identifier());
+                    self.do_free(temp.identifier);
 
                 }
             }
         }
 
-        Ok(mem::take(&mut self.ir))
+        Ok(take(&mut self.ir))
         
     }
 }

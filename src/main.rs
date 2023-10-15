@@ -33,7 +33,9 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
 
     if args::arg_show_parse() {
         println!("=== PARSER PASS ===");
-        println!("{statements:#?}");
+        for statement in &statements {
+            println!("{statement:?}");
+        }
     }
 
     let mut ir = ir::generate_ir(statements)?;

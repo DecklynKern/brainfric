@@ -32,6 +32,8 @@ pub enum Token {
     WriteLine,
     Read,
 
+    Comma,
+
     OpenParen,
     CloseParen,
     OpenSquare,
@@ -88,6 +90,7 @@ impl Token {
     fn try_parse_symbols(token: &str) -> Option<Self> {
 
         Some(match token {
+            "," => Self::Comma,
             "(" => Self::OpenParen,
             ")" => Self::CloseParen,
             "[" => Self::OpenSquare,
@@ -110,15 +113,43 @@ impl Token {
     }
 
     pub fn is_type_head(&self) -> bool {
-        matches!(self, Self::Bool | Self::Byte | Self::Short | Self::Stack | Self::Array)
+        matches!(self,
+            Self::Bool |
+            Self::Byte |
+            Self::Short |
+            Self::Stack |
+            Self::Array
+        )
+    }
+
+    pub fn is_factor_head(&self) -> bool {
+        matches!(self,
+            Self::OpenParen |
+            Self::BoolLiteral(_) |
+            Self::NumberLiteral(_) |
+            Self::CharLiteral(_) |
+            Self::StringLiteral(_)
+        )
     }
 
     pub fn is_unary_operator(&self) -> bool {
-        matches!(self, Self::AsBool | Self::AsNum | Self::Not)
+        matches!(self,
+            Self::AsBool |
+            Self::AsNum |
+            Self::Not
+        )
     }
 
     pub fn is_binary_operator(&self) -> bool {
-        matches!(self, Self::Equal | Self::OpenAngle | Self::CloseAngle | Self::Plus | Self::Hypen | Self::Ampersand | Self::Pipe)
+        matches!(self,
+            Self::Equal |
+            Self::OpenAngle |
+            Self::CloseAngle |
+            Self::Plus |
+            Self::Hypen |
+            Self::Ampersand |
+            Self::Pipe
+        )
     }
 }
 
@@ -158,7 +189,7 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
         let mut token_ended = true;
 
         if current_token_initial_char != TokenInitialChar::DoubleQuote && current_token == "//" {
-            break; // comment
+            return Ok(tokens);
         }
         else if current_token_initial_char == TokenInitialChar::Alphabetic && 
             (!(chr.is_alphanumeric() || chr == '_') || token_over) {
