@@ -317,9 +317,9 @@ impl IRGenerator {
 
     fn resolve_accessor(&self, accessor: Accessor) -> Result<(MemoryAccess, DataType), BrainFricError> {
 
-        let (id, mut data_type) = self.name_table.get(accessor.identifier.as_ref()).map_or_else(
+        let (id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
             ||
-                err!(self.current_line_num, IRError::UnknownIdentifier(accessor.identifier)),
+                err!(self.current_line_num, IRError::UnknownIdentifier(accessor.name)),
             |(id, data_type)|
                 Ok((id, data_type.clone()))
         )?;
@@ -366,31 +366,17 @@ impl IRGenerator {
         )
     }
 
-    fn do_move<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess) {
+    fn do_move<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess, negate: bool) {
         self.ir.0.push(IRStatement::MoveCell(
-            to.into_iter().map(|mem| (mem, false)).collect(),
+            to.into_iter().map(|mem| (mem, negate)).collect(),
             from
         ));
     }
 
-    fn do_move_negative<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess) {
-        self.ir.0.push(IRStatement::MoveCell(
-            to.into_iter().map(|mem| (mem, true)).collect(),
-            from
-        ));
-    }
-
-    fn do_copy(&mut self, to: MemoryAccess, from: MemoryAccess) {
+    fn do_copy(&mut self, to: MemoryAccess, from: MemoryAccess, negate: bool) {
         let temp = self.allocate_temporary();
-        self.do_move([temp.clone(), to], from.clone());
-        self.do_move([from], temp.clone());
-        self.do_free(temp.identifier);
-    }
-
-    fn do_copy_negative(&mut self, to: MemoryAccess, from: MemoryAccess) {
-        let temp = self.allocate_temporary();
-        self.do_move([temp.clone()], from.clone());
-        self.do_move_negative([from, to], temp.clone());
+        self.do_move([temp.clone(), to], from.clone(), false);
+        self.do_move([from], temp.clone(), negate);
         self.do_free(temp.identifier);
     }
 
@@ -430,7 +416,7 @@ impl IRGenerator {
             Expression::Access(accessor) => {
                 let (mem, data_type) = self.resolve_accessor(accessor)?;
                 self.assert_data_type(&DataType::Bool, &data_type)?;
-                self.do_copy(into, mem);
+                self.do_copy(into, mem, false);
             }
             Expression::BoolLiteral(value) => {
                 self.do_add_const(into, value as u8);
@@ -440,8 +426,8 @@ impl IRGenerator {
                 let (mem, is_temp) = self.evaluate_expression(*expr, &DataType::Byte)?;
                 let temp = self.allocate_temporary();
 
-                self.do_move([into.clone(), temp.clone()], mem.clone());
-                self.do_move([mem.clone()], into.clone());
+                self.do_move([into.clone(), temp.clone()], mem.clone(), false);
+                self.do_move([mem.clone()], into.clone(), false);
 
                 self.do_begin_loop();
                 self.do_add_const(into, 1);
@@ -474,10 +460,10 @@ impl IRGenerator {
 
                 let temp = self.allocate_temporary();
 
-                self.do_copy(temp.clone(), mem2.clone());
+                self.do_copy(temp.clone(), mem2.clone(), false);
 
                 self.do_begin_loop();
-                self.do_copy(into, mem1.clone());
+                self.do_copy(into, mem1.clone(), false);
                 self.do_sub_const(temp.clone(), 1);
                 self.do_end_loop(temp.clone(), true);
 
@@ -492,8 +478,8 @@ impl IRGenerator {
                 let (mem2, is_temp2) = self.evaluate_expression(*expr2, &DataType::Bool)?;
 
                 let temp = self.allocate_temporary();
-                self.do_copy(temp.clone(), mem1.clone());
-                self.do_copy(temp.clone(), mem2.clone());
+                self.do_copy(temp.clone(), mem1.clone(), false);
+                self.do_copy(temp.clone(), mem2.clone(), false);
 
                 self.do_begin_loop();
                 self.do_add_const(into, 1);
@@ -520,13 +506,8 @@ impl IRGenerator {
                 
                 let (mem, data_type) = self.resolve_accessor(accessor)?;
                 self.assert_data_type(&DataType::Byte, &data_type)?;
+                self.do_copy(into, mem, negate);
 
-                if negate {
-                    self.do_copy_negative(into, mem);
-                }
-                else {
-                    self.do_copy(into, mem);
-                }
             }
             Expression::AsNum(expr) => {
                 self.evaluate_bool_expression_into(*expr, into)?;
@@ -559,14 +540,9 @@ impl IRGenerator {
 
                 self.do_begin_loop();
 
-                if negate {
-                    self.do_move_raw([(into, true), (temp3.clone(), false)], temp1.clone());
-                }
-                else {
-                    self.do_move([into, temp3.clone()], temp1.clone());
-                }
+                self.do_move_raw([(into, negate), (temp3.clone(), false)], temp1.clone());
 
-                self.do_move([temp1.clone()], temp3.clone());
+                self.do_move([temp1.clone()], temp3.clone(), false);
 
                 self.do_sub_const(temp2.clone(), 1);
                 self.do_end_loop(temp2.clone(), false);
@@ -703,7 +679,7 @@ impl IRGenerator {
                     let (mem2, is_temp2) = self.evaluate_expression(expression, &DataType::Bool)?;
 
                     if mem1 != mem2 {
-                        self.do_move([mem1.clone()], mem2.clone());
+                        self.do_move([mem1.clone()], mem2.clone(), false);
                     }
 
                     self.do_end_loop(mem1.clone(), false);

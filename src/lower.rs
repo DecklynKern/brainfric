@@ -111,7 +111,7 @@ impl Lowerer {
             else {
                 "<"
             }
-            .repeat(jump_size.abs() as usize)
+            .repeat(jump_size.unsigned_abs() as usize)
         );
     }
 

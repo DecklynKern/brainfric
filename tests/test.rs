@@ -9,9 +9,7 @@ use brainfric::lower::*;
 macro_rules! program {
     () => {
         "
-        byte a
-        byte b
-        byte c
+        byte a, b, c
 
         a <- 240
         read b
@@ -21,87 +19,87 @@ macro_rules! program {
         "
     }
 }
+
+macro_rules! id {
+    ($name: literal) => {
+        Token::Identifier($name.into())
+    }
+}
 macro_rules! tokens {
     () => {
         vec![
             vec![],
             vec![
                 Token::Byte,
-                Token::Identifier("a".into())
-            ],
-            vec![
-                Token::Byte,
-                Token::Identifier("b".into())
-            ],
-            vec![
-                Token::Byte,
-                Token::Identifier("c".into())
+                id!("a"),
+                Token::Comma,
+                id!("b"),
+                Token::Comma,
+                id!("c")
             ],
             vec![],
             vec![
-                Token::Identifier("a".into()),
+                id!("a"),
                 Token::SetTo,
                 Token::NumberLiteral(240)
             ],
             vec![
                 Token::Read,
-                Token::Identifier("b".into())
+                id!("b")
             ],
             vec![],
             vec![
-                Token::Identifier("c".into()),
+                id!("c"),
                 Token::SetTo,
-                Token::Identifier("a".into()),
+                id!("a"),
                 Token::Hypen,
-                Token::Identifier("b".into())
+                id!("b")
             ],
             vec![
                 Token::Write,
-                Token::Identifier("c".into())
+                id!("c")
             ],
             vec![],
         ]
     };
+}
+
+macro_rules! access {
+    ($name: literal) => {
+        Accessor::from_name($name.into())
+    }
 }
 macro_rules! statements {
     () => {
         vec![
             Statement {
                 line_num: 2,
-                body: StatementBody::Declaration("a".into(), DataType::Byte)
-            },
-            Statement {
-                line_num: 3,
-                body: StatementBody::Declaration("b".into(), DataType::Byte)
+                body: StatementBody::Declaration(vec!["a".into(), "b".into(), "c".into()], DataType::Byte)
             },
             Statement {
                 line_num: 4,
-                body: StatementBody::Declaration("c".into(), DataType::Byte)
-            },
-            Statement {
-                line_num: 6,
                 body: StatementBody::SetTo(
-                    "a".into(),
+                    access!("a"),
                     Expression::NumberLiteral(240)
                 )
             },
             Statement {
-                line_num: 7,
-                body: StatementBody::Read("b".into())
+                line_num: 5,
+                body: StatementBody::Read(access!("b"))
             },
             Statement {
-                line_num: 9,
+                line_num: 7,
                 body: StatementBody::SetTo(
-                    "c".into(),
+                    access!("c"),
                     Expression::Subtract(
-                        Box::new(Expression::Identifier("a".into())),
-                        Box::new(Expression::Identifier("b".into()))
+                        Box::new(Expression::Access(access!("a"))),
+                        Box::new(Expression::Access(access!("b")))
                     )
                 )
             },
             Statement {
-                line_num: 10,
-                body: StatementBody::Write(Expression::Identifier("c".into()))
+                line_num: 8,
+                body: StatementBody::Write(Expression::Access(access!("c")))
             }
         ]
     };
@@ -109,7 +107,7 @@ macro_rules! statements {
 
 macro_rules! bf_code {
     () => {
-        ">,<---------------->>----------------<[->>+<<]>>[-<<->->]<."
+        ">,<---------------->>----------------<[->>+<+<]>>[-<<->>]<."
     };
 }
 

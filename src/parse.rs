@@ -84,17 +84,24 @@ impl std::fmt::Debug for Specifier {
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct Accessor {
-    pub identifier: Name,
+    pub name: Name,
     pub specifiers: Box<[Specifier]>
 }
 
 impl std::fmt::Debug for Accessor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Accessor(\"{}\", {:?})", self.identifier, self.specifiers)
+        write!(f, "Accessor(\"{}\", {:?})", self.name, self.specifiers)
     }
 }
 
 impl Accessor {
+
+    pub fn from_name(name: Name) -> Self {
+        Self {
+            name,
+            specifiers: Box::new([])
+        }
+    }
 
     fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
@@ -105,10 +112,8 @@ impl Accessor {
 
         tokens.next();
 
-        Some(Self {
-            identifier: name.clone(),
-            specifiers: Box::new([])
-        })
+        Some(Self::from_name(name.clone()))
+
     }
 }
 
