@@ -11,9 +11,12 @@ Each statement is placed on a new line with no semicolons required.
 
 ## Variables
 Variables are declared with a `[type] [name]` statement as in `byte a` or `bool x`.
-Currently there are only two types (more are planned):
+Currently there are only three types (more are planned):
 * `byte` represents a single byte
+  * This can be seen as both a value from 0-255 or a single ASCII character, just like a C char
 * `bool` represents a boolean `true` or `false`
+* `seq<[type], [size]>` represents a sequence of `size` values of type `type`
+  * `seq<byte, 5>` is a sequence of 5 bytes
 
 ## Assignment
 Variables are assigned values using a `[name] <- [expression]` statement.
@@ -23,6 +26,15 @@ Here are some examples:
 * `a <- b + c`
 * `x <- false`
 * `x <- ?(#x + b)`
+
+## Specifiers
+An specifier accesses a segment of a larger data structure. The only currently supported specifier is `[seq] @ N` which is a constant index into a sequence, for example:
+`
+seq<byte, 3> s
+s @ 0 <- 1
+s @ 1 <- 2
+s @ 2 <- 3
+`
 
 ## Expressions
 The following operations are allowed in expressions:
@@ -84,4 +96,6 @@ brainfric assumes the following about the interpreter running its code (these ar
 * the I/O operations use single bytes to transfer characters (like chars in C) in whatever encoding is used (some ASCII extension)
 
 ## brainfric IR
-TODO
+Like many other compilers, brainfric uses an intermediate representation (IR) to perform optimizations on the given code. brainfric IR is much different from IRs because of the nature of the language it will eventually be converted into. It represents higher-level BF operations that are broken down more finely than individual lines of brainfric code, but are still much easier to work with than actual BF code.
+
+TODO: explain IR statements.
