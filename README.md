@@ -29,12 +29,12 @@ Here are some examples:
 
 ## Specifiers
 An specifier accesses a segment of a larger data structure. The only currently supported specifier is `[seq] @ N` which is a constant index into a sequence, for example:
-`
+```
 seq<byte, 3> s
 s @ 0 <- 1
 s @ 1 <- 2
 s @ 2 <- 3
-`
+```
 
 ## Expressions
 The following operations are allowed in expressions:
