@@ -90,16 +90,8 @@ impl Token {
             _ => return None
         })
     }
-
-    fn try_parse_bool_literal(token: &str) -> Option<Self> {
-        token.parse::<bool>().map(Self::BoolLiteral).ok()
-    }
     
-    fn try_parse_number_literal(token: &str) -> Option<Self> {
-        token.parse::<i32>().map(Self::NumberLiteral).ok()
-    }
-
-    fn try_parse_symbols(token: &str) -> Option<Self> {
+    fn try_parse_symbol(token: &str) -> Option<Self> {
 
         Some(match token {
             "," => Self::Comma,
@@ -200,20 +192,31 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
     let mut chars = line.chars().peekable();
 
     while let Some(char) = chars.peek() {
+        
+        if let Some(token) = try_lex_name(&mut chars) {
+            tokens.push(token);
+        }
 
-        match lex_char_literal(&mut chars) {
+        match try_lex_symbol(&mut chars) {
+            Ok(Some(token)) => tokens.push(token),
+            Ok(None) => {}
+            Err(()) => err!(line_num, LexError::InvalidSymbol)
+        }
+        
+        if let Some(num) = try_lex_number_literal(&mut chars) {
+            tokens.push(Token::NumberLiteral(num));
+        }
+
+        match try_lex_char_literal(&mut chars) {
             Ok(Some(char_literal)) => tokens.push(Token::CharLiteral(char_literal)),
             Ok(None) => {}
             Err(()) => err!(line_num, LexError::InvalidCharLiteral)
         }
 
-        match lex_string_literal(&mut chars) {
+        match try_lex_string_literal(&mut chars) {
             Ok(Some(string_literal)) => tokens.push(Token::StringLiteral(string_literal)),
             Ok(None) => {}
             Err(()) => err!(line_num, LexError::InvalidStringLiteral)
-        }
-        if let Some(num) = lex_number_literal(&mut chars) {
-            tokens.push(Token::NumberLiteral(num));
         }
         
         err!(line_num, LexError::InvalidToken);
@@ -224,116 +227,82 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
 
     Ok(tokens)
 
-    // let mut chars: Vec<char> = line.chars().rev().collect();
-    // chars.insert(0, ' ');
-    
-    // let mut current_token = String::new();
-    // let mut current_token_initial_char = TokenInitialChar::None;
-
-    // while let Some(chr) = chars.pop() {
-
-    //     let token_over = (chr.is_whitespace() && current_token_initial_char.is_quote()) || chars.is_empty();
-    //     let mut token_ended = true;
-
-    //     if current_token_initial_char != TokenInitialChar::DoubleQuote && current_token == "//" {
-    //         return Ok(tokens);
-    //     }
-    //     else if current_token_initial_char == TokenInitialChar::Alphabetic && 
-    //         (!(chr.is_alphanumeric() || chr == '_') || token_over) {
-
-    //         if let Some(token) = Token::try_parse_keyword(&current_token) {
-    //             tokens.push(token);
-    //         }
-    //         else if let Some(token) = Token::try_parse_bool_literal(&current_token) {
-    //             tokens.push(token);
-    //         }
-    //         else {
-    //             tokens.push(Token::Identifier(current_token.clone().into()));
-    //         }
-    //     }
-    //     else if current_token_initial_char == TokenInitialChar::Numeric && 
-    //         (!chr.is_numeric() || token_over) {
-
-    //         if let Some(token) = Token::try_parse_number_literal(&current_token) {
-    //             tokens.push(token);
-    //         }
-    //         else {
-    //             err!(line_num, LexError::InvalidToken(current_token.clone()));
-    //         }
-    //     }
-    //     else if current_token_initial_char == TokenInitialChar::SingleQuote && chr == '\'' {
-
-    //         if current_token.len() != 2 {
-    //             err!(line_num, LexError::InvalidCharLiteral(current_token.clone()));
-    //         }
-
-    //         tokens.push(Token::CharLiteral(current_token.chars().nth(1).unwrap()));
-
-    //         current_token.clear();
-    //         current_token_initial_char = TokenInitialChar::None;
-    //         continue;
-
-    //     }
-    //     else if current_token_initial_char == TokenInitialChar::DoubleQuote && chr == '"' {
-    //         tokens.push(Token::StringLiteral(current_token[1..].into()));
-    //         current_token.clear();
-    //         current_token_initial_char = TokenInitialChar::None;
-    //         continue;
-    //     }
-    //     else if let Some(token) = Token::try_parse_symbols(&current_token) {
-
-    //         let mut try_add = current_token.clone();
-    //         try_add.push(chr);
-
-    //         if Token::try_parse_symbols(&try_add).is_some() {
-    //             current_token.push(chr);
-    //             continue;
-    //         }
-    //         else {
-    //             tokens.push(token);
-    //         }
-    //     }
-    //     else if !token_over {
-    //         token_ended = false;
-    //     }
-
-    //     if current_token_initial_char == TokenInitialChar::None || token_ended {
-
-    //         current_token.clear();
-        
-    //         current_token_initial_char = if chr.is_alphabetic() {
-    //             TokenInitialChar::Alphabetic
-    //         }
-    //         else if chr.is_numeric() {
-    //             TokenInitialChar::Numeric
-    //         }
-    //         else if chr == '\'' {
-    //             TokenInitialChar::SingleQuote
-    //         }
-    //         else if chr == '"' {
-    //             TokenInitialChar::DoubleQuote
-    //         }
-    //         else if chr.is_whitespace() {
-    //             TokenInitialChar::None
-    //         }
-    //         else {
-    //             TokenInitialChar::Other
-    //         };
-    //     }
-
-    //     if !token_over {
-    //         current_token.push(chr);
-    //     }
-    // }
-
-    // if !current_token.is_empty() {
-    // }
-
-    // Ok(tokens)
-
 }
 
-fn lex_char_literal(chars: &mut Peekable<Chars>) -> Result<Option<char>, ()> {
+fn try_lex_name(chars: &mut Peekable<Chars>) -> Option<Token> {
+
+    let Some(char) = chars.peek()
+    else {
+        return None;
+    };
+
+    if !chars.is_alphabetic() || *char == '_' {
+        return None;
+    }
+
+    let mut name_chars = String::new();
+    name_chars.push(*char);
+
+    while let Some(char) = chars.peek() && (char.is_alphanumeric()) || *char == '_') {
+        name_chars.push(*char);
+        chars.next();
+    }
+
+    if name_chars.is_empty() {
+       None 
+    }
+    else {
+        Token::try_parse_keyword(&name_chars)
+            .or_else(|| name_chars.parse::<bool>().map(Token::BoolLiteral).ok())
+            .or_else(|| Token::Identifier(name_chars.into()))
+    }
+}
+
+fn try_lex_symbol(chars: &mut Peekable<Chars>) -> Result<Option<Token>, ()> {
+
+    let mut symbol_chars = String::new();
+    let mut last_valid_symbol = None;
+
+    // make function for nameable chars?
+    while let Some(char) = chars.peek() && !(char.is_alphanumeric() || char == '_') {
+        
+        symbol_chars.push(*char);
+
+        if let Some(symbol) = Token::try_parse_symbol(&symbol_chars) {
+            last_valid_symbol = Some(symbol);
+            chars.next();
+        }
+        else if last_valid_symbol.is_some() {
+            return Ok(last_valid_symbol);
+        }
+    }
+
+    if symbol_chars.is_empty() {
+        Ok(None)
+    }
+    else {
+        Err(())
+    }
+}
+
+fn try_lex_number_literal(chars: &mut Peekable<Chars>) -> Option<i32> {
+
+    let mut number_chars = String::new();
+
+    while let Some(char) = chars.peek() && char.is_numeric() {
+        number_chars.push(*char);
+        chars.next();
+    }
+
+    if number_chars.is_empty() {
+        None
+    }
+    else {
+        Some(number_chars.parse().unwrap())
+    }
+}
+
+fn try_lex_char_literal(chars: &mut Peekable<Chars>) -> Result<Option<char>, ()> {
 
     if chars.peek() != Some(&'\'') {
         return Ok(None);
@@ -354,7 +323,7 @@ fn lex_char_literal(chars: &mut Peekable<Chars>) -> Result<Option<char>, ()> {
     }
 }
 
-fn lex_string_literal(chars: &mut Peekable<Chars>) -> Result<Option<Rc<str>>, ()> {
+fn try_lex_string_literal(chars: &mut Peekable<Chars>) -> Result<Option<Rc<str>>, ()> {
 
     if chars.peek() != Some(&'"') {
         return Ok(None);
@@ -376,26 +345,4 @@ fn lex_string_literal(chars: &mut Peekable<Chars>) -> Result<Option<Rc<str>>, ()
 
     Err(())
 
-}
-
-fn lex_number_literal(chars: &mut Peekable<Chars>) -> Option<i32> {
-    
-    let Some(char) = chars.peek()
-    else {
-        return None;
-    };
-
-    let mut number_chars = String::new();
-
-    while let Some(char) = chars.peek() && char.is_numeric() {
-        number_chars.push(*char);
-        chars.next();
-    }
-
-    if number_chars.is_empty() {
-        None
-    }
-    else {
-        Some(number_chars.parse().unwrap())
-    }
 }
