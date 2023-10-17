@@ -169,23 +169,6 @@ pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
     code.split('\n').enumerate().map(lex_line).collect()
 }
 
-#[derive(PartialEq, Eq, Debug)]
-enum TokenInitialChar {
-    Alphabetic,
-    Numeric,
-    SingleQuote,
-    DoubleQuote,
-    Other,
-    None
-}
-
-impl TokenInitialChar {
-
-    fn is_quote(&self) -> bool {
-        matches!(self, Self::SingleQuote | Self::DoubleQuote)
-    }
-}
-
 fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
 
     let mut tokens = Vec::new();
@@ -268,11 +251,13 @@ fn try_lex_symbol(chars: &mut Peekable<Chars>) -> Result<Option<Token>, ()> {
 
         if let Some(symbol) = Token::try_parse_symbol(&symbol_chars) {
             last_valid_symbol = Some(symbol);
-            chars.next();
         }
         else if last_valid_symbol.is_some() {
             return Ok(last_valid_symbol);
         }
+        
+        chars.next();
+        
     }
 
     if symbol_chars.is_empty() {
