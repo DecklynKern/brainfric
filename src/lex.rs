@@ -223,8 +223,6 @@ fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricErro
 
     }
 
-    todo!("rewrite lexer");
-
     Ok(tokens)
 
 }
@@ -236,7 +234,7 @@ fn try_lex_name(chars: &mut Peekable<Chars>) -> Option<Token> {
         return None;
     };
 
-    if !chars.is_alphabetic() || *char == '_' {
+    if !char.is_alphabetic() || *char == '_' {
         return None;
     }
 
@@ -254,7 +252,7 @@ fn try_lex_name(chars: &mut Peekable<Chars>) -> Option<Token> {
     else {
         Token::try_parse_keyword(&name_chars)
             .or_else(|| name_chars.parse::<bool>().map(Token::BoolLiteral).ok())
-            .or_else(|| Token::Identifier(name_chars.into()))
+            .or_else(|| Some(Token::Identifier(name_chars.into())))
     }
 }
 
@@ -264,7 +262,7 @@ fn try_lex_symbol(chars: &mut Peekable<Chars>) -> Result<Option<Token>, ()> {
     let mut last_valid_symbol = None;
 
     // make function for nameable chars?
-    while let Some(char) = chars.peek() && !(char.is_alphanumeric() || char == '_') {
+    while let Some(char) = chars.peek() && !(char.is_alphanumeric() || *char == '_') {
         
         symbol_chars.push(*char);
 
