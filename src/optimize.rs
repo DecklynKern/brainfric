@@ -43,12 +43,25 @@ pub fn optimize(ir: &mut IRBlock) -> [u32; 2] {
 
 }
 
-fn get_next_reference_idx(ir: &[IRStatement], id: Identifier, current_use_idx: usize) -> Option<usize> {
+fn get_next_reference_idx(ir: &[IRStatement], mem: &MemoryAccess, current_use_idx: usize) -> Option<usize> {
     ir.iter()
         .enumerate()
         .skip(current_use_idx + 1)
         .find_map(|(idx, statement)|
-            statement.references_identifier(id).then_some(idx))
+            statement.uses_access(mem).then_some(idx))
+}
+
+fn get_known_value(known_values: &mut HashMap<MemoryAccess, Option<u8>>, mem: &MemoryAccess) -> Option<u8> {
+
+    let known_value = known_values.get(mem);
+
+    if let Some(&value) = known_value {
+        return value;
+    }
+
+    known_values.insert(mem.clone(), Some(0));
+    Some(0)
+
 }
 
 #[derive(Debug)]
@@ -62,13 +75,11 @@ enum OptimizeActionStage1 {
     None
 }
 
-fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_values: &mut HashMap<usize, Option<u8>>) -> OptimizeActionStage1 {
+fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_values: &mut HashMap<MemoryAccess, Option<u8>>) -> OptimizeActionStage1 {
 
     match &ir[statement_idx] {
 
-        IRStatement::Alloc(allocation) => {
-            known_values.insert(allocation.get_identifier(), Some(0));
-        }
+        IRStatement::Alloc(_) => {}
         IRStatement::Free(_) => {}
         IRStatement::AddConst(mem, num) => {
 
@@ -76,7 +87,7 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                 return OptimizeActionStage1::DeleteStatement;
             }
 
-            if let Some(next_reference_idx) = get_next_reference_idx(ir, mem.identifier, statement_idx) {
+            if let Some(next_reference_idx) = get_next_reference_idx(ir, mem, statement_idx) {
 
                 match &ir[next_reference_idx] {
                     IRStatement::AddConst(_, _) =>
@@ -87,13 +98,13 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                 }
             }
 
-            if let Some(num2) = known_values[&mem.identifier] {
-                known_values.insert(mem.identifier, Some(num.overflowing_add(num2).0));
+            if let Some(num2) = get_known_value(known_values, mem){
+                known_values.insert(mem.clone(), Some(num.overflowing_add(num2).0));
             }
         }
         IRStatement::MoveCell(to, from) => {
 
-            if let Some(num) = known_values[&from.identifier] {
+            if let Some(num) = get_known_value(known_values, from) {
 
                 // technically the second branch handles both
                 // but this creates a lot less redundant passes
@@ -115,10 +126,10 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
             }
 
             for (mem, _) in to.iter() {
-                known_values.insert(mem.identifier, None);
+                known_values.insert(mem.clone(), None);
             }
 
-            known_values.insert(from.identifier, Some(0));
+            known_values.insert(from.clone(), Some(0));
 
             for check_idx in (0..statement_idx).rev() {
 
@@ -134,18 +145,18 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                     }
                 }
 
-                if ir[check_idx].references_identifier(from.identifier) {
+                if ir[check_idx].uses_access(from) {
                     break;
                 }
             }
         }
         IRStatement::WriteByte(_) => {},
         IRStatement::ReadByte(mem) => {
-            known_values.insert(mem.identifier, None);
+            known_values.insert(mem.clone(), None);
         }
         IRStatement::Loop(mem, block, run_once) => {
 
-            let known_value = known_values[&mem.identifier];
+            let known_value = get_known_value(known_values, mem);
 
             // can maybe make loop optimization more powerful
             return if let Some(0) = known_value {
@@ -153,13 +164,13 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
             }
             else if *run_once {
 
-                let mut mutated_identifiers = block.get_mutated_identifiers();
+                let mut mutated_identifiers = block.get_mutated_accesses();
 
-                if mutated_identifiers.remove(&mem.identifier) && mutated_identifiers.is_empty() && !block.contains_io() {
+                if mutated_identifiers.remove(mem) && mutated_identifiers.is_empty() && !block.contains_io() {
                     OptimizeActionStage1::DeleteStatement
                 }
                 else {
-                    match known_values[&mem.identifier] {
+                    match known_value {
                         Some(_) => OptimizeActionStage1::GuaranteeIf,
                         None => OptimizeActionStage1::OptimizeLoop
                     }
@@ -175,7 +186,7 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
 
 }
 
-fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<usize, Option<u8>>) -> bool {
+fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<MemoryAccess, Option<u8>>) -> bool {
 
     let mut statement_idx = 0;
 
@@ -204,11 +215,11 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
                     panic!("loop optimization error")
                 };
 
-                let mutated_identifiers = block.get_mutated_identifiers();
+                let mutated_accesses: Vec<MemoryAccess> = block.get_mutated_accesses().iter().map(|&access| access.clone()).collect();
 
                 if !*run_once {
-                    for address in &mutated_identifiers {
-                        known_values.insert(*address, None);
+                    for access in mutated_accesses.clone() {
+                        known_values.insert(access, None);
                     }
                 }
                     
@@ -218,11 +229,11 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
                     did_action = optimize_pass_stage2(&mut block.0);
                 }
                     
-                for mutated_id in &mutated_identifiers {
-                    known_values.insert(*mutated_id, None);
+                for access in mutated_accesses {
+                    known_values.insert(access, None);
                 }
 
-                known_values.insert(mem.identifier, Some(0));
+                known_values.insert(mem.clone(), Some(0));
                     
             }
             OptimizeActionStage1::CombineAdd(num, idx) => {
@@ -256,8 +267,8 @@ fn optimize_pass_stage1(ir: &mut Vec<IRStatement>, known_values: &mut HashMap<us
                 let _ = mem::replace(
                     to,
                     to.iter()
-                        .cloned()
                         .filter(|(addr, _)| *addr != id)
+                        .cloned()
                         .chain(replace_ids.iter().cloned())
                         .collect::<Box<_>>()
                 );

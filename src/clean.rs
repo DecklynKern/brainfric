@@ -1,12 +1,12 @@
+const PATTERNS: [&str; 4] = ["<>", "><", "+-", "-+"];
+
 pub fn clean(code: &mut String) {
 
-    while let Some(idx) = code.rfind("+-") {
-        code.remove(idx);
-        code.remove(idx);
-    }
-
-    while let Some(idx) = code.rfind("-+") {
-        code.remove(idx);
-        code.remove(idx);
+    for pattern in PATTERNS {
+        while let Some(idx) = code.rfind(pattern) {
+            for _ in 0..pattern.len() {
+                code.remove(idx);
+            }
+        }
     }
 }

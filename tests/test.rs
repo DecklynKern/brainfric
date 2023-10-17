@@ -66,7 +66,7 @@ macro_rules! tokens {
 
 macro_rules! access {
     ($name: literal) => {
-        Accessor::from_name($name.into())
+        Accessor {name: $name.into(), specifiers: Box::new([])}
     }
 }
 macro_rules! statements {

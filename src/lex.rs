@@ -2,6 +2,8 @@ use crate::error::*;
 use crate::err;
 
 use std::rc::Rc;
+use std::str::Chars;
+use std::iter::Peekable;
 
 pub type Name = Rc<str>;
 
@@ -18,11 +20,16 @@ pub enum Token {
     Bool,
     Byte,
     Short,
+    Sequence,
     Stack,
     Array,
 
     Inc,
     Dec,
+
+    Clear,
+    LeftShift,
+    RightShift,
 
     While,
     If,
@@ -41,9 +48,9 @@ pub enum Token {
     OpenAngle,
     CloseAngle,
 
-    AsBool,
-    AsNum,
-    Not,
+    Question,
+    Pound,
+    Exclamation,
 
     SetTo,
 
@@ -54,7 +61,8 @@ pub enum Token {
 
     At,
     Ampersand,
-    Pipe
+    Pipe,
+    Dollar
 
 }
 
@@ -65,10 +73,14 @@ impl Token {
             "bool" => Self::Bool,
             "byte" => Self::Byte,
             "short" => Self::Short,
+            "seq" => Self::Sequence,
             "stack" => Self::Stack,
             "array" => Self::Array,
             "inc" => Self::Inc,
             "dec" => Self::Dec,
+            "clear" => Self::Clear,
+            "lshift" => Self::LeftShift,
+            "rshift" => Self::RightShift,
             "while" => Self::While,
             "if" => Self::If,
             "end" => Self::End,
@@ -97,9 +109,9 @@ impl Token {
             "]" => Self::CloseSquare,
             "<" => Self::OpenAngle,
             ">" => Self::CloseAngle,
-            "?" => Self::AsBool,
-            "#" => Self::AsNum,
-            "!" => Self::Not,
+            "?" => Self::Question,
+            "#" => Self::Pound,
+            "!" => Self::Exclamation,
             "<-" => Self::SetTo,
             "=" => Self::Equal,
             "+" => Self::Plus,
@@ -108,6 +120,7 @@ impl Token {
             "@" => Self::At,
             "&" => Self::Ampersand,
             "|" => Self::Pipe,
+            "$" => Self::Dollar,
             _ => return None
         })
     }
@@ -117,8 +130,15 @@ impl Token {
             Self::Bool |
             Self::Byte |
             Self::Short |
+            Self::Sequence |
             Self::Stack |
             Self::Array
+        )
+    }
+
+    pub fn is_specifier_head(&self) -> bool {
+        matches!(self,
+            Self::At
         )
     }
 
@@ -134,9 +154,9 @@ impl Token {
 
     pub fn is_unary_operator(&self) -> bool {
         matches!(self,
-            Self::AsBool |
-            Self::AsNum |
-            Self::Not
+            Self::Question |
+            Self::Pound |
+            Self::Exclamation
         )
     }
 
@@ -176,113 +196,206 @@ impl TokenInitialChar {
 
 fn lex_line((line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
 
-    let mut chars: Vec<char> = line.chars().rev().collect();
-    chars.insert(0, ' ');
-    
     let mut tokens = Vec::new();
-    let mut current_token = String::new();
-    let mut current_token_initial_char = TokenInitialChar::None;
+    let mut chars = line.chars().peekable();
 
-    while let Some(chr) = chars.pop() {
+    while let Some(char) = chars.peek() {
 
-        let token_over = (chr.is_whitespace() && current_token_initial_char.is_quote()) || chars.is_empty();
-        let mut token_ended = true;
-
-        if current_token_initial_char != TokenInitialChar::DoubleQuote && current_token == "//" {
-            return Ok(tokens);
-        }
-        else if current_token_initial_char == TokenInitialChar::Alphabetic && 
-            (!(chr.is_alphanumeric() || chr == '_') || token_over) {
-
-            if let Some(token) = Token::try_parse_keyword(&current_token) {
-                tokens.push(token);
-            }
-            else if let Some(token) = Token::try_parse_bool_literal(&current_token) {
-                tokens.push(token);
-            }
-            else {
-                tokens.push(Token::Identifier(current_token.clone().into()));
-            }
-        }
-        else if current_token_initial_char == TokenInitialChar::Numeric && 
-            (!chr.is_numeric() || token_over) {
-
-            if let Some(token) = Token::try_parse_number_literal(&current_token) {
-                tokens.push(token);
-            }
-            else {
-                err!(line_num, LexError::InvalidToken(current_token.clone()));
-            }
-        }
-        else if current_token_initial_char == TokenInitialChar::SingleQuote && chr == '\'' {
-
-            if current_token.len() != 2 {
-                err!(line_num, LexError::InvalidCharLiteral(current_token.clone()));
-            }
-
-            tokens.push(Token::CharLiteral(current_token.chars().nth(1).unwrap()));
-
-            current_token.clear();
-            current_token_initial_char = TokenInitialChar::None;
-            continue;
-
-        }
-        else if current_token_initial_char == TokenInitialChar::DoubleQuote && chr == '"' {
-            tokens.push(Token::StringLiteral(current_token[1..].into()));
-            current_token.clear();
-            current_token_initial_char = TokenInitialChar::None;
-            continue;
-        }
-        else if let Some(token) = Token::try_parse_symbols(&current_token) {
-
-            let mut try_add = current_token.clone();
-            try_add.push(chr);
-
-            if Token::try_parse_symbols(&try_add).is_some() {
-                current_token.push(chr);
-                continue;
-            }
-            else {
-                tokens.push(token);
-            }
-        }
-        else if !token_over {
-            token_ended = false;
+        match lex_char_literal(&mut chars) {
+            Ok(Some(char_literal)) => tokens.push(Token::CharLiteral(char_literal)),
+            Ok(None) => {}
+            Err(()) => err!(line_num, LexError::InvalidCharLiteral)
         }
 
-        if current_token_initial_char == TokenInitialChar::None || token_ended {
-
-            current_token.clear();
+        match lex_string_literal(&mut chars) {
+            Ok(Some(string_literal)) => tokens.push(Token::StringLiteral(string_literal)),
+            Ok(None) => {}
+            Err(()) => err!(line_num, LexError::InvalidStringLiteral)
+        }
+        if let Some(num) = lex_number_literal(&mut chars) {
+            tokens.push(Token::NumberLiteral(num));
+        }
         
-            current_token_initial_char = if chr.is_alphabetic() {
-                TokenInitialChar::Alphabetic
-            }
-            else if chr.is_numeric() {
-                TokenInitialChar::Numeric
-            }
-            else if chr == '\'' {
-                TokenInitialChar::SingleQuote
-            }
-            else if chr == '"' {
-                TokenInitialChar::DoubleQuote
-            }
-            else if chr.is_whitespace() {
-                TokenInitialChar::None
-            }
-            else {
-                TokenInitialChar::Other
-            };
-        }
+        err!(line_num, LexError::InvalidToken);
 
-        if !token_over {
-            current_token.push(chr);
-        }
     }
 
-    if !current_token.is_empty() {
-        err!(line_num, LexError::InvalidToken(current_token));
-    }
+    todo!("rewrite lexer");
 
     Ok(tokens)
 
+    // let mut chars: Vec<char> = line.chars().rev().collect();
+    // chars.insert(0, ' ');
+    
+    // let mut current_token = String::new();
+    // let mut current_token_initial_char = TokenInitialChar::None;
+
+    // while let Some(chr) = chars.pop() {
+
+    //     let token_over = (chr.is_whitespace() && current_token_initial_char.is_quote()) || chars.is_empty();
+    //     let mut token_ended = true;
+
+    //     if current_token_initial_char != TokenInitialChar::DoubleQuote && current_token == "//" {
+    //         return Ok(tokens);
+    //     }
+    //     else if current_token_initial_char == TokenInitialChar::Alphabetic && 
+    //         (!(chr.is_alphanumeric() || chr == '_') || token_over) {
+
+    //         if let Some(token) = Token::try_parse_keyword(&current_token) {
+    //             tokens.push(token);
+    //         }
+    //         else if let Some(token) = Token::try_parse_bool_literal(&current_token) {
+    //             tokens.push(token);
+    //         }
+    //         else {
+    //             tokens.push(Token::Identifier(current_token.clone().into()));
+    //         }
+    //     }
+    //     else if current_token_initial_char == TokenInitialChar::Numeric && 
+    //         (!chr.is_numeric() || token_over) {
+
+    //         if let Some(token) = Token::try_parse_number_literal(&current_token) {
+    //             tokens.push(token);
+    //         }
+    //         else {
+    //             err!(line_num, LexError::InvalidToken(current_token.clone()));
+    //         }
+    //     }
+    //     else if current_token_initial_char == TokenInitialChar::SingleQuote && chr == '\'' {
+
+    //         if current_token.len() != 2 {
+    //             err!(line_num, LexError::InvalidCharLiteral(current_token.clone()));
+    //         }
+
+    //         tokens.push(Token::CharLiteral(current_token.chars().nth(1).unwrap()));
+
+    //         current_token.clear();
+    //         current_token_initial_char = TokenInitialChar::None;
+    //         continue;
+
+    //     }
+    //     else if current_token_initial_char == TokenInitialChar::DoubleQuote && chr == '"' {
+    //         tokens.push(Token::StringLiteral(current_token[1..].into()));
+    //         current_token.clear();
+    //         current_token_initial_char = TokenInitialChar::None;
+    //         continue;
+    //     }
+    //     else if let Some(token) = Token::try_parse_symbols(&current_token) {
+
+    //         let mut try_add = current_token.clone();
+    //         try_add.push(chr);
+
+    //         if Token::try_parse_symbols(&try_add).is_some() {
+    //             current_token.push(chr);
+    //             continue;
+    //         }
+    //         else {
+    //             tokens.push(token);
+    //         }
+    //     }
+    //     else if !token_over {
+    //         token_ended = false;
+    //     }
+
+    //     if current_token_initial_char == TokenInitialChar::None || token_ended {
+
+    //         current_token.clear();
+        
+    //         current_token_initial_char = if chr.is_alphabetic() {
+    //             TokenInitialChar::Alphabetic
+    //         }
+    //         else if chr.is_numeric() {
+    //             TokenInitialChar::Numeric
+    //         }
+    //         else if chr == '\'' {
+    //             TokenInitialChar::SingleQuote
+    //         }
+    //         else if chr == '"' {
+    //             TokenInitialChar::DoubleQuote
+    //         }
+    //         else if chr.is_whitespace() {
+    //             TokenInitialChar::None
+    //         }
+    //         else {
+    //             TokenInitialChar::Other
+    //         };
+    //     }
+
+    //     if !token_over {
+    //         current_token.push(chr);
+    //     }
+    // }
+
+    // if !current_token.is_empty() {
+    // }
+
+    // Ok(tokens)
+
+}
+
+fn lex_char_literal(chars: &mut Peekable<Chars>) -> Result<Option<char>, ()> {
+
+    if chars.peek() != Some(&'\'') {
+        return Ok(None);
+    }
+
+    chars.next();
+
+    let Some(char) = chars.next()
+    else {
+        return Err(());
+    };
+
+    if chars.next() == Some('\'') {
+        Ok(Some(char))
+
+    } else {
+        Err(())
+    }
+}
+
+fn lex_string_literal(chars: &mut Peekable<Chars>) -> Result<Option<Rc<str>>, ()> {
+
+    if chars.peek() != Some(&'"') {
+        return Ok(None);
+    }
+
+    chars.next();
+
+    let mut string_literal = String::new();
+
+    while let Some(char) = chars.next() {
+
+        if char == '"' {
+            return Ok(Some(string_literal.into()));
+        }
+        
+        string_literal.push(char);
+
+    }
+
+    Err(())
+
+}
+
+fn lex_number_literal(chars: &mut Peekable<Chars>) -> Option<i32> {
+    
+    let Some(char) = chars.peek()
+    else {
+        return None;
+    };
+
+    let mut number_chars = String::new();
+
+    while let Some(char) = chars.peek() && char.is_numeric() {
+        number_chars.push(*char);
+        chars.next();
+    }
+
+    if number_chars.is_empty() {
+        None
+    }
+    else {
+        Some(number_chars.parse().unwrap())
+    }
 }

@@ -6,16 +6,18 @@ pub trait ErrorDesc {
 }
 
 pub enum LexError {
-    InvalidToken(String),
-    InvalidCharLiteral(String)
+    InvalidToken,
+    InvalidStringLiteral,
+    InvalidCharLiteral
 }
 
 impl ErrorDesc for LexError {
 
     fn get_description(&self) -> String {
         format!("Lex Error: {}", match self {
-            Self::InvalidToken(token) => format!("Invalid token: \"{token}\""),
-            Self::InvalidCharLiteral(literal) => format!("Invalid char literal '{literal}'")
+            Self::InvalidToken => "Invalid token",
+            Self::InvalidStringLiteral => "Invalid string literal",
+            Self::InvalidCharLiteral => "Invalid char literal"
         })
     }
 }
@@ -27,7 +29,8 @@ pub enum ParseError {
     ExpectedOpenAngle,
     ExpectedCloseAngle,
     ExpectedNumberLiteral,
-    ExpectedEnd
+    ExpectedEnd,
+    StringLiteralTooLarge
 }
 
 impl ErrorDesc for ParseError {
@@ -40,7 +43,8 @@ impl ErrorDesc for ParseError {
             Self::ExpectedOpenAngle => "Expected '<'",
             Self::ExpectedCloseAngle => "Expected '>'",
             Self::ExpectedNumberLiteral => "Expected number literal",
-            Self::ExpectedEnd => "Expected end statement to block"
+            Self::ExpectedEnd => "Expected end statement to block",
+            Self::StringLiteralTooLarge => "String literal too large for declared sequence"
         })
     }
 }
@@ -48,10 +52,10 @@ impl ErrorDesc for ParseError {
 pub enum IRError {
     UnknownIdentifier(Name),
     TypeMismatch(DataType, DataType),
-    ExpectedReadableAccess,
-    ExpectedWriteableAccess,
-    ExpectedModifyableAccess,
-    ExpectedTypedExpression(DataType)
+    ExpectedSequence,
+    ExpectedTypedExpression(DataType),
+    OutOfBoundsAccess,
+    ShiftTooLarge
 }
 
 impl ErrorDesc for IRError {
@@ -62,14 +66,14 @@ impl ErrorDesc for IRError {
                 format!("Unknown identifier \"{identifier}\""),
             Self::TypeMismatch(expected_type, got_type) =>  
                 format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
-            Self::ExpectedReadableAccess =>
-                "Expected readable access".to_string(),
-            Self::ExpectedWriteableAccess =>
-                "Expected writeable access".to_string(),
-            Self::ExpectedModifyableAccess =>
-                "Expected modifyable access".to_string(),
+            Self::ExpectedSequence =>
+                "Expected sequence".to_string(),
             Self::ExpectedTypedExpression(expected_type) =>
-                format!("Expected {expected_type:?} expression")
+                format!("Expected {expected_type:?} expression"),
+            Self::OutOfBoundsAccess =>
+                "Out of bounds access".to_string(),
+            Self::ShiftTooLarge =>
+                "Shift is too large for sequence size".to_string()
         })
     }
 }

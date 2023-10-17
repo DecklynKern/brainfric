@@ -7,12 +7,12 @@ use crate::err;
 use crate::lex::*;
 
 macro_rules! expect_token {
-    ($tokens: ident, $token: expr) => {
-        if let Some(token) = $tokens.next() {
-            if *token != $token {
-                return None;
-            }
-        }
+    ($tokens: ident, $token: pat) => {
+        expect_token!($tokens, $token, {})
+    };
+    
+    ($tokens: ident, $token: pat, $if_token: block) => {
+        if let Some($token) = $tokens.next() $if_token
         else {
             return None;
         }
@@ -24,7 +24,8 @@ pub enum DataType {
     Bool,
     Byte,
     Short,
-    Stack(usize),
+    Sequence(Box<DataType>, usize),
+    Stack(Box<DataType>, usize),
     //Array(Rc<DataType>, usize)
 }
 
@@ -36,7 +37,8 @@ impl DataType {
             Self::Bool => 1,
             Self::Byte => 1,
             Self::Short => 2,
-            Self::Stack(len) => *len + 2,
+            Self::Sequence(data_type, len) => len * data_type.get_size(),
+            Self::Stack(data_type, len) => len * (data_type.get_size() + 1) + 1,
             //Self::Array(data_type, len) => data_type.get_size() * len
         }
     }
@@ -51,34 +53,49 @@ impl DataType {
             Token::Bool => Self::Bool,
             Token::Byte => Self::Byte,
             Token::Short => Self::Short,
-            Token::Stack => {
+            Token::Sequence => return {
 
                 expect_token!(tokens, Token::OpenAngle);
 
-                match tokens.next() {
-                    Some(Token::NumberLiteral(size)) => {
-                        expect_token!(tokens, Token::CloseAngle);
-                        DataType::Stack(*size as usize)
+                Self::try_parse(tokens).and_then(|inner_type| {
+                    expect_token!(tokens, Token::Comma);
+                    match tokens.next() {
+                        Some(Token::NumberLiteral(size)) => Some({
+                            expect_token!(tokens, Token::CloseAngle);
+                            DataType::Sequence(Box::new(inner_type), *size as usize)
+                        }),
+                        _ => None
                     }
-                    _ => return None
-                }
-            }
+                })
+            },
+            Token::Stack => todo!(),
             Token::Array => todo!(),
             _ => unreachable!()
         })
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Specifier {
-    StackTop
+    ConstIndex(i32)
 }
 
-impl std::fmt::Debug for Specifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::StackTop => "StackTop"
-        })
+impl Specifier {
+
+    fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
+
+        if tokens.peek().is_some_and(|token| token.is_specifier_head()) {
+
+            Some(match tokens.next().unwrap() {
+                Token::At => 
+                    // change when array happens
+                    expect_token!(tokens, Token::NumberLiteral(idx), {Self::ConstIndex(*idx)}),
+                _ => unreachable!()
+            })
+        }
+        else {
+            None
+        }
     }
 }
 
@@ -96,13 +113,6 @@ impl std::fmt::Debug for Accessor {
 
 impl Accessor {
 
-    pub fn from_name(name: Name) -> Self {
-        Self {
-            name,
-            specifiers: Box::new([])
-        }
-    }
-
     fn try_parse(tokens: &mut Peekable<Iter<Token>>) -> Option<Self> {
 
         let Some(Token::Identifier(name)) = tokens.peek()
@@ -112,8 +122,16 @@ impl Accessor {
 
         tokens.next();
 
-        Some(Self::from_name(name.clone()))
+        let mut specifiers = Vec::new();
 
+        while let Some(specifier) = Specifier::try_parse(tokens) {
+            specifiers.push(specifier);
+        }
+
+        Some(Self {
+            name: name.clone(),
+            specifiers: specifiers.into()
+        })
     }
 }
 
@@ -177,9 +195,9 @@ impl Expression {
             let op = tokens.next().unwrap();
 
             Self::try_parse_term(tokens).map(|term| match op {
-                Token::AsBool => Self::AsBool,
-                Token::AsNum => Self::AsNum,
-                Token::Not => Self::Not,
+                Token::Question => Self::AsBool,
+                Token::Pound => Self::AsNum,
+                Token::Exclamation => Self::Not,
                 _ => unreachable!()
             }(Box::new(term)))
         }
@@ -239,6 +257,9 @@ pub enum StatementBody {
     SetTo(Accessor, Expression),
     Inc(Accessor),
     Dec(Accessor),
+    Clear(Accessor),
+    LeftShift(Accessor, u32),
+    RightShift(Accessor, u32),
     Write(Expression),
     Read(Accessor),
     While(Expression, Vec<Statement>),
@@ -287,7 +308,6 @@ impl StatementBody {
                 return Ok(Self::SetTo(accessor, expression));
             }
             else {
-                println!("bruh, {:?}", tokens);
                 err!(line_num, ParseError::InvalidExpression);
             }
         }
@@ -296,25 +316,47 @@ impl StatementBody {
 
         Ok(match token1 {
 
-            Token::Inc => {
+            Token::Inc | Token::Dec | Token:: Clear | Token::Read => {
                 
-                let Some(accessor) = Accessor::try_parse(tokens)
+                let (Some(accessor), true) = (Accessor::try_parse(tokens), tokens.is_empty())
                 else {
                     err!(line_num, ParseError::InvalidAccessor);
                 };
-                
-                Self::Inc(accessor)
-                
+
+                match token1 {
+                    Token::Inc => Self::Inc(accessor),
+                    Token::Dec => Self::Dec(accessor),
+                    Token::Clear => Self::Clear(accessor),
+                    Token::Read => Self::Read(accessor),
+                    _ => unreachable!()
+                }
             }
-            Token::Dec => {
+            Token::LeftShift | Token::RightShift => {
+
+                if !matches!(tokens.next(), Some(Token::OpenAngle)) {
+                    err!(line_num, ParseError::ExpectedOpenAngle);
+                }
+
+                let Some(Token::NumberLiteral(offset)) = tokens.next()
+                else {
+                    err!(line_num, ParseError::ExpectedNumberLiteral);
+                };
+
+                if !matches!(tokens.next(), Some(Token::CloseAngle)) {
+                    err!(line_num, ParseError::ExpectedCloseAngle);
+                }
                 
                 let Some(accessor) = Accessor::try_parse(tokens)
                 else {
                     err!(line_num, ParseError::InvalidAccessor);
                 };
-                
-                Self::Dec(accessor)
-                
+
+                if *token1 == Token::LeftShift {
+                    Self::LeftShift(accessor, *offset as u32)
+                }
+                else {
+                    Self::RightShift(accessor, *offset as u32)
+                }
             }
             Token::Write => {
 
@@ -328,16 +370,6 @@ impl StatementBody {
             }
             Token::WriteLine => {
                 Self::Write(Expression::NumberLiteral(10))
-            }
-            Token::Read => {
-                
-                let Some(accessor) = Accessor::try_parse(tokens)
-                else {
-                    err!(line_num, ParseError::InvalidAccessor);
-                };
-                
-                Self::Read(accessor)
-                
             }
             _ => err!(line_num, ParseError::InvalidStatement)
         })

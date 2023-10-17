@@ -36,7 +36,7 @@ macro_rules! create_flags {
 }
 
 create_flags!(
-    DO_OPTIMIZATION,            "-doopt",           arg_do_optimization,            true,
+    DO_OPTIMIZATION,            "-noopt",           arg_do_optimization,            true,
     ALLOW_DELETE_VARIABLES,     "-allowdelvars",    arg_allow_delete_variables,     false,
     SHOW_LEX,                   "-showlex",         arg_show_lex,                   false,
     SHOW_PARSE,                 "-showparse",       arg_show_parse,                 false,

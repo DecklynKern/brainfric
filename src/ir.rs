@@ -38,15 +38,20 @@ impl Allocation {
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum Offset {
+    Constant(i32)
+}
+
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct MemoryAccess {
     pub identifier: Identifier,
-    pub specifiers: Box<[Specifier]>
+    pub offsets: Box<[Offset]>
 }
 
 impl std::fmt::Debug for MemoryAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemAccess({}, {:?})", self.identifier, self.specifiers)
+        write!(f, "MemAccess({}, {:?})", self.identifier, self.offsets)
     }
 }
 
@@ -55,7 +60,18 @@ impl MemoryAccess {
     pub fn from_identifier(id: Identifier) -> Self {
         Self {
             identifier: id,
-            specifiers: Box::new([])
+            offsets: Box::new([])
+        }
+    }
+
+    pub fn with_const_offset(&self, offset: i32) -> Self {
+
+        let mut offsets: Vec<_> = self.offsets.clone().into();
+        offsets.push(Offset::Constant(offset));
+
+        Self {
+            identifier: self.identifier,
+            offsets: offsets.into()
         }
     }
 }
@@ -69,12 +85,12 @@ impl IRBlock {
         Self(Vec::new())
     }
 
-    pub fn get_mutated_identifiers(&self) -> HashSet<Identifier> {
+    pub fn get_mutated_accesses(&self) -> HashSet<&MemoryAccess> {
 
         let mut used = HashSet::new();
 
         for statement in &self.0 {
-            used.extend(statement.get_mutated_identifiers().iter());
+            used.extend(statement.get_mutated_accesses().iter());
         }
 
         used
@@ -86,13 +102,13 @@ impl IRBlock {
             matches!(statement, IRStatement::WriteByte(_) | IRStatement::ReadByte(_))
         )
     }
+
+    pub fn uses_access(&self, mem: &MemoryAccess) -> bool {
+        self.0.iter().any(|statement| statement.uses_access(mem))
+    }
     
     pub fn reads_identifier_value(&self, id: Identifier) -> bool {
         self.0.iter().any(|statement| statement.reads_identifier_value(id))
-    }
-
-    pub fn references_identifier(&self, id: Identifier) -> bool {
-        self.0.iter().any(|statement| statement.references_identifier(id))
     }
 
     pub fn delete_identifier(&mut self, id: Identifier) -> bool {
@@ -127,21 +143,38 @@ pub enum IRStatement {
 
 impl IRStatement {
 
-    pub fn get_mutated_identifiers(&self) -> HashSet<Identifier> {
+    pub fn get_mutated_accesses(&self) -> HashSet<&MemoryAccess> {
 
         match self {
             Self::Alloc(_) | Self::Free(_) | Self::WriteByte(_) | Self::ReadByte(_) =>
                 HashSet::new(),
             Self::AddConst(mem, _) => {
-                HashSet::from([mem.identifier])
+                HashSet::from([mem])
             }
             Self::MoveCell(to, from) => {
-                let mut ids = HashSet::from_iter(to.iter().map(|cell| cell.0.identifier));
-                ids.insert(from.identifier);
+                let mut ids = HashSet::from_iter(to.iter().map(|cell| &cell.0));
+                ids.insert(from);
                 ids
             }
             Self::Loop(_, block, _) =>
-                block.get_mutated_identifiers()
+                block.get_mutated_accesses()
+        }
+    }
+
+    pub fn uses_access(&self, check_mem: &MemoryAccess) -> bool {
+
+        match self {
+            Self::MoveCell(to, from) =>
+                from == check_mem || to.iter().any(|cell| cell.0 == *check_mem),
+            Self::Alloc(alloc) =>
+                alloc.get_identifier() == check_mem.identifier,
+            Self::AddConst(mem, _) | Self::WriteByte(mem) |
+            Self::ReadByte(mem) =>
+                mem == check_mem,
+            Self::Free(id) =>
+                *id == check_mem.identifier,
+            Self::Loop(mem, block, _) =>
+                mem == check_mem || block.uses_access(check_mem)
         }
     }
 
@@ -156,23 +189,6 @@ impl IRStatement {
                 mem.identifier == id || block.reads_identifier_value(id),
             Self::Alloc(_) | Self::AddConst(_, _) | Self::Free(_) =>
                 false
-        }
-    }
-
-    pub fn references_identifier(&self, id: Identifier) -> bool {
-
-        match self {
-            Self::MoveCell(to, from) =>
-                from.identifier == id || to.iter().any(|cell| cell.0.identifier == id),
-            Self::Alloc(alloc) =>
-                alloc.get_identifier() == id,
-            Self::AddConst(mem, _) | Self::WriteByte(mem) |
-            Self::ReadByte(mem) =>
-                mem.identifier == id,
-            Self::Free(check_id) =>
-                *check_id == id,
-            Self::Loop(check_id, block, _) =>
-                check_id.identifier == id || block.references_identifier(id)
         }
     }
 
@@ -194,8 +210,8 @@ impl IRStatement {
                 let _ = replace(
                     to,
                     to.iter()
-                        .cloned()
                         .filter(|temp| temp.0.identifier != id)
+                        .cloned()
                         .collect::<Box<_>>()
                 );
 
@@ -324,10 +340,19 @@ impl IRGenerator {
                 Ok((id, data_type.clone()))
         )?;
 
+        let mut sized_specifiers = Vec::new();
+
         for specifier in accessor.specifiers.iter() {
             match (specifier, data_type) {
-                (Specifier::StackTop, DataType::Stack(_)) => {
-                    data_type = DataType::Byte;
+                (Specifier::ConstIndex(idx), DataType::Sequence(inner_type, len)) => {
+
+                    if *idx as usize >= len {
+                        err!(self.current_line_num, IRError::OutOfBoundsAccess);
+                    }
+
+                    sized_specifiers.push(Offset::Constant(*idx * inner_type.get_size() as i32));
+                    data_type = *inner_type;
+                    
                 }
                 _ => todo!("bad access")
             }
@@ -336,25 +361,10 @@ impl IRGenerator {
         Ok((
             MemoryAccess {
                 identifier: *id,
-                specifiers: accessor.specifiers
+                offsets: sized_specifiers.into()
             },
             data_type
         ))
-    }
-
-    fn assert_can_read(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
-        Ok(())
-        // ?
-    }
-
-    fn assert_can_write(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
-        Ok(())
-        // ?
-    }
-
-    fn assert_can_modify(&self, mem: &MemoryAccess) -> Result<(), BrainFricError> {
-        Ok(())
-        // ?
     }
 
     fn do_move_raw<const N: usize>(&mut self, to: [(MemoryAccess, bool); N], from: MemoryAccess) {
@@ -602,24 +612,74 @@ impl IRGenerator {
                     }
                 }
                 StatementBody::SetTo(accessor, expression) => {
+
                     let (mem, data_type) = self.resolve_accessor(accessor)?;
-                    self.assert_can_write(&mem)?;
+
+                    if let (
+                        DataType::Sequence(box DataType::Byte, seq_size),
+                        Expression::StringLiteral(string)
+                    ) = (&data_type, &expression) {
+
+                        let len = string.chars().count();
+
+                        if len > *seq_size {
+                            err!(self.current_line_num, ParseError::StringLiteralTooLarge);
+                        }
+
+                        for (char_num, char) in string.chars().enumerate() {
+
+                            let with_offset = mem.with_const_offset(char_num as i32);
+
+                            self.do_clear(with_offset.clone());
+                            self.do_add_const(with_offset, char as u8);
+
+                        }
+
+                        continue;
+
+                    }
+
+
                     self.do_clear(mem.clone());
                     self.evaluate_expression_into(expression, &data_type, mem)?;
 
                 }
                 StatementBody::Inc(accessor) => {
+
                     let (mem, data_type) = self.resolve_accessor(accessor)?;
-                    self.assert_can_modify(&mem)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_add_const(mem, 1);
 
                 }
                 StatementBody::Dec(accessor) => {
+
                     let (mem, data_type) = self.resolve_accessor(accessor)?;
-                    self.assert_can_modify(&mem)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_sub_const(mem, 1);
+
+                }
+                StatementBody::Clear(accessor) => {
+
+                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+
+                    if !matches!(data_type, DataType::Sequence(_, _)) {
+                        err!(self.current_line_num, IRError::ExpectedSequence);
+                    }
+                    
+                    // make more sophisticated
+
+                    for cell in 0..data_type.get_size() {
+                        self.do_clear(MemoryAccess {
+                            identifier: mem.identifier,
+                            offsets: Box::new([Offset::Constant(cell as i32)])
+                        });
+                    }
+                }
+                StatementBody::LeftShift(accessor, amount) => {
+                    todo!()
+                }
+                StatementBody::RightShift(accessor, amount) => {
+                    todo!()
                 }
                 StatementBody::Write(expression) => {
 
@@ -647,7 +707,6 @@ impl IRGenerator {
                 }
                 StatementBody::Read(accessor) => {
                     let (access, data_type) = self.resolve_accessor(accessor)?;
-                    self.assert_can_write(&access)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_read(access);
                 }

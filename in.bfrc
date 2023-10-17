@@ -1,19 +1,14 @@
-byte a, b, c
+seq<byte, 20> str
 
-a <- 3
-b <- 0
-c <- a * b
+str <- "Hello, World!"
 
-write a
-write b
-write c
+write str
+writeln
 
+// s@N - const index
+// s << N - push
+// s$ - stack top read
+// s$N - stack top read (with const offset)
+// s! - stack pop read
 
-
-// stack<5> s
-
-// @s <- 3
-
-// read @s
-// write &s
-// write *s
+// need to rethink stacks for now
