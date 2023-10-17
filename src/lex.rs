@@ -243,7 +243,7 @@ fn try_lex_name(chars: &mut Peekable<Chars>) -> Option<Token> {
     let mut name_chars = String::new();
     name_chars.push(*char);
 
-    while let Some(char) = chars.peek() && (char.is_alphanumeric()) || *char == '_') {
+    while let Some(char) = chars.peek() && (char.is_alphanumeric() || *char == '_') {
         name_chars.push(*char);
         chars.next();
     }
