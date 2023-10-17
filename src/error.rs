@@ -7,6 +7,7 @@ pub trait ErrorDesc {
 
 pub enum LexError {
     InvalidToken,
+    InvalidSymbol,
     InvalidStringLiteral,
     InvalidCharLiteral
 }
@@ -16,6 +17,7 @@ impl ErrorDesc for LexError {
     fn get_description(&self) -> String {
         format!("Lex Error: {}", match self {
             Self::InvalidToken => "Invalid token",
+            Self::InvalidSymbol => "Invalid symbol",
             Self::InvalidStringLiteral => "Invalid string literal",
             Self::InvalidCharLiteral => "Invalid char literal"
         })
