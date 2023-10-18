@@ -137,6 +137,8 @@ pub enum IRStatement {
     AddConst(MemoryAccess, u8),
     MoveCell(Box<[(MemoryAccess, bool)]>, MemoryAccess),
     WriteByte(MemoryAccess),
+    WriteByteSequence(MemoryAccess, usize),
+    WriteString(MemoryAccess),
     ReadByte(MemoryAccess),
     Loop(MemoryAccess, IRBlock, bool)
 }
@@ -146,7 +148,8 @@ impl IRStatement {
     pub fn get_mutated_accesses(&self) -> HashSet<&MemoryAccess> {
 
         match self {
-            Self::Alloc(_) | Self::Free(_) | Self::WriteByte(_) | Self::ReadByte(_) =>
+            Self::Alloc(_) | Self::Free(_) | Self::WriteByte(_) | Self::WriteByteSequence(_, _) |
+            Self::WriteString(_) | Self::ReadByte(_) =>
                 HashSet::new(),
             Self::AddConst(mem, _) => {
                 HashSet::from([mem])
@@ -171,6 +174,8 @@ impl IRStatement {
             Self::AddConst(mem, _) | Self::WriteByte(mem) |
             Self::ReadByte(mem) =>
                 mem == check_mem,
+            Self::WriteByteSequence(mem, _) | Self::WriteString(mem) =>
+                mem.identifier == check_mem.identifier,
             Self::Free(id) =>
                 *id == check_mem.identifier,
             Self::Loop(mem, block, _) =>
@@ -183,7 +188,8 @@ impl IRStatement {
         match self {
             Self::MoveCell(_, from)  =>
                 from.identifier == id,
-            Self::WriteByte(mem) | Self::ReadByte(mem) =>
+            Self::WriteByte(mem) | Self::WriteByteSequence(mem, _) |
+            Self::WriteString(mem) | Self::ReadByte(mem) =>
                 mem.identifier == id,
             Self::Loop(mem, block, _) =>
                 mem.identifier == id || block.reads_identifier_value(id),
@@ -218,10 +224,11 @@ impl IRStatement {
                 false
 
             }
-            Self::WriteByte(mem) | Self::ReadByte(mem) => {
+            Self::WriteByte(mem) | Self::WriteByteSequence(mem, _) |
+            Self::WriteString(mem) | Self::ReadByte(mem) => {
 
                 if mem.identifier == id {
-                    panic!("attempted to delete used value")
+                    unreachable!();
                 }
                     
                 false
@@ -354,6 +361,16 @@ impl IRGenerator {
                     data_type = *inner_type;
                     
                 }
+                (Specifier::ConstIndex(idx), DataType::String(len)) => {
+
+                    if *idx as usize >= len {
+                        err!(self.current_line_num, IRError::OutOfBoundsAccess);
+                    }
+
+                    sized_specifiers.push(Offset::Constant(*idx + 1));
+                    data_type = DataType::Byte;
+                    
+                }
                 _ => todo!("bad access")
             }
         }
@@ -404,6 +421,14 @@ impl IRGenerator {
 
     fn do_write(&mut self, mem: MemoryAccess) {
         self.ir.0.push(IRStatement::WriteByte(mem));
+    }
+
+    fn do_write_byte_seq(&mut self, mem: MemoryAccess, len: usize) {
+        self.ir.0.push(IRStatement::WriteByteSequence(mem, len));
+    }
+
+    fn do_write_string(&mut self, mem: MemoryAccess) {
+        self.ir.0.push(IRStatement::WriteString(mem));
     }
 
     fn do_read(&mut self, mem: MemoryAccess) {
@@ -616,7 +641,7 @@ impl IRGenerator {
                     let (mem, data_type) = self.resolve_accessor(accessor)?;
 
                     if let (
-                        DataType::Sequence(box DataType::Byte, seq_size),
+                        DataType::Sequence(box DataType::Byte, seq_size) | DataType::String(seq_size),
                         Expression::StringLiteral(string)
                     ) = (&data_type, &expression) {
 
@@ -626,9 +651,11 @@ impl IRGenerator {
                             err!(self.current_line_num, ParseError::StringLiteralTooLarge);
                         }
 
+                        let type_offset = if let DataType::Sequence(_, _) = data_type {0} else {1};
+
                         for (char_num, char) in string.chars().enumerate() {
 
-                            let with_offset = mem.with_const_offset(char_num as i32);
+                            let with_offset = mem.with_const_offset(char_num as i32 + type_offset);
 
                             self.do_clear(with_offset.clone());
                             self.do_add_const(with_offset, char as u8);
@@ -638,7 +665,6 @@ impl IRGenerator {
                         continue;
 
                     }
-
 
                     self.do_clear(mem.clone());
                     self.evaluate_expression_into(expression, &data_type, mem)?;
@@ -698,6 +724,20 @@ impl IRGenerator {
                         self.do_free_access(temp);
                         continue;
                     
+                    }
+                    
+                    if let Expression::Access(access) = &expression {
+
+                        let (mem, data_type) = self.resolve_accessor(access.clone())?;
+
+                        if let DataType::Sequence(box DataType::Byte, len) = data_type {
+                            self.do_write_byte_seq(mem, len);
+                            continue;
+                        }
+                        else if let DataType::String(_) = data_type {
+                            self.do_write_string(mem);
+                            continue;
+                        }
                     }
 
                     let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;

@@ -150,7 +150,7 @@ fn find_optimization_stage1(ir: &[IRStatement], statement_idx: usize, known_valu
                 }
             }
         }
-        IRStatement::WriteByte(_) => {},
+        IRStatement::WriteByte(_) | IRStatement::WriteByteSequence(_, _) | IRStatement::WriteString(_) => {},
         IRStatement::ReadByte(mem) => {
             known_values.insert(mem.clone(), None);
         }

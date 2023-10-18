@@ -9,4 +9,8 @@ pub fn clean(code: &mut String) {
             }
         }
     }
+
+    while code.ends_with('>') || code.ends_with('<') {
+        code.pop();
+    }
 }

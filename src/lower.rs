@@ -168,6 +168,18 @@ impl Lowerer {
                     self.jump_to(mem);
                     self.bf_code.push('.');
                 }
+                IRStatement::WriteByteSequence(mem, len) => {
+
+                    self.jump_to(mem);
+                    
+                    self.bf_code.push_str(&".>".repeat(len));
+                    self.bf_code.push_str(&"<".repeat(len));
+
+                }
+                IRStatement::WriteString(mem) => {
+                    self.jump_to(mem);
+                    self.bf_code.push_str(">[.>]<[<]");
+                }
                 IRStatement::Loop(mem, block, _) => {
                     self.jump_to(mem.clone());
                     self.bf_code.push('[');

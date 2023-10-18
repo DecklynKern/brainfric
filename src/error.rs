@@ -93,7 +93,7 @@ impl BrainFricError {
             println!("Error on line {}.", self.line);
         }
         else {
-            println!("Interal compiler error.")
+            println!("Internal compiler error.")
         }
 
         println!("{}", self.error.get_description());

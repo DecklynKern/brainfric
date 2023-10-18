@@ -1,14 +1,10 @@
-seq<byte, 20> str
-
-str <- "Hello, World!"
+string<10> str
+str <- "lol"
 
 write str
 writeln
 
-// s@N - const index
-// s << N - push
-// s$ - stack top read
-// s$N - stack top read (with const offset)
-// s! - stack pop read
+str @ 1 <- 'a'
 
-// need to rethink stacks for now
+write str
+writeln

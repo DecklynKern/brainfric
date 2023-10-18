@@ -1,0 +1,8 @@
+
+s@N - const index
+s << N - push
+s$ - stack top read
+s$N - stack top read (with const offset)
+s! - stack pop read
+
+need to rethink stacks for now

@@ -25,6 +25,7 @@ pub enum DataType {
     Byte,
     Short,
     Sequence(Box<DataType>, usize),
+    String(usize),
     Stack(Box<DataType>, usize),
     //Array(Rc<DataType>, usize)
 }
@@ -38,6 +39,7 @@ impl DataType {
             Self::Byte => 1,
             Self::Short => 2,
             Self::Sequence(data_type, len) => len * data_type.get_size(),
+            Self::String(len) => len + 2,
             Self::Stack(data_type, len) => len * (data_type.get_size() + 1) + 1,
             //Self::Array(data_type, len) => data_type.get_size() * len
         }
@@ -49,6 +51,7 @@ impl DataType {
             return None;
         }
 
+        // make a better system for this lol
         Some(match tokens.next().unwrap() {
             Token::Bool => Self::Bool,
             Token::Byte => Self::Byte,
@@ -67,6 +70,18 @@ impl DataType {
                         _ => None
                     }
                 })
+            },
+            Token::String => return {
+
+                expect_token!(tokens, Token::OpenAngle);
+
+                match tokens.next() {
+                    Some(Token::NumberLiteral(size)) => Some({
+                        expect_token!(tokens, Token::CloseAngle);
+                        DataType::String(*size as usize)
+                    }),
+                    _ => None
+                }
             },
             Token::Stack => todo!(),
             Token::Array => todo!(),
