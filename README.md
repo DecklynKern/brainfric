@@ -1,5 +1,5 @@
 # brainfric
-Compiler for a custom scripting language into brainf***.
+Compiler for a custom scripting language into brainf***. This is a constant WIP so don't expect anything to actually work right now lol.
 
 # Overview
 This is made largely for myself as a learning experience about writing my own programming language.
