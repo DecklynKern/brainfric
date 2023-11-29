@@ -7,6 +7,88 @@ use crate::err;
 use crate::lex::Name;
 use crate::parse::*;
 
+// pub trait Variable {
+//     fn get_known_value(&self) -> Option<u8>;
+//     fn clear_value(&mut self);
+//     fn try_as_byte(&self) -> Option<&Byte> {None}
+// }
+
+// pub struct Byte {
+//     known_value: Option<u8>
+// }
+
+// impl Variable for Byte {
+
+//     fn get_known_value(&self) -> Option<u8> {
+//         self.known_value
+//     }
+
+//     fn clear_value(&mut self) {
+//         self.known_value = None;
+//     }
+
+//     fn try_as_byte(&self) -> Option<&Byte> {
+//         Some(&self)
+//     }
+// }
+
+// pub struct Short {
+//     known_value: Option<u16>
+// }
+
+// impl Variable for Short {
+
+//     fn get_known_value(&self) -> Option<u8> {
+//         todo!()
+//     }
+
+//     fn clear_value(&mut self) {
+//         self.known_value = None;
+//     }
+// }
+
+// pub struct Sequence<const L: usize, T: Variable> {
+//     values: [T; L]
+// }
+
+// impl<const L: usize, T: Variable> Variable for Sequence<L, T> {
+
+//     fn get_known_value(&self) -> Option<u8> {
+//         todo!()
+//     }
+
+//     fn clear_value(&mut self) {
+//         for value in &mut self.values {
+//             value.clear_value();  
+//         }
+//     }
+// }
+
+// pub enum _Allocation {
+//     Variable(Box<dyn Variable>),
+//     Temporary(Byte)
+// }
+
+// pub struct _MemoryAccess {
+//     pub identifier: Rc<RefCell<dyn Variable>>,
+//     pub offsets: Box<[Offset]>
+// }
+
+// pub enum _IRStatement {
+//     Alloc(_Allocation),
+//     Free(Identifier),
+//     AddConst(_MemoryAccess, u8),
+//     MoveCell(Box<[(MemoryAccess, bool)]>, MemoryAccess),
+//     WriteByte(MemoryAccess),
+//     WriteByteSequence(MemoryAccess, usize),
+//     WriteString(MemoryAccess),
+//     ReadByte(MemoryAccess),
+//     Loop(MemoryAccess, IRBlock, bool)
+// }
+
+
+
+
 pub type Identifier = usize;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -371,6 +453,13 @@ impl IRGenerator {
                     data_type = DataType::Byte;
                     
                 }
+                (Specifier::Lower, DataType::Short) => {
+                    data_type = DataType::Byte;
+                }
+                (Specifier::Upper, DataType::Short) => {
+                    sized_specifiers.push(Offset::Constant(1));
+                    data_type = DataType::Byte;
+                }
                 _ => todo!("bad access")
             }
         }
@@ -433,6 +522,36 @@ impl IRGenerator {
 
     fn do_read(&mut self, mem: MemoryAccess) {
         self.ir.0.push(IRStatement::ReadByte(mem));
+    }
+
+    fn do_copy_short(&mut self, to_low: MemoryAccess, from_low: MemoryAccess, negate: bool) {
+
+        let temp = self.allocate_temporary();
+        let to_high = to_low.with_const_offset(1);
+        let from_high = from_low.with_const_offset(1);
+
+        self.do_move([temp.clone(), to_low], from_low.clone(), false);
+        self.do_move([from_low], temp.clone(), negate);
+
+        self.do_move([temp.clone(), to_high], from_high.clone(), false);
+        self.do_move([from_high], temp.clone(), negate);
+
+        self.do_free(temp.identifier);
+
+    }
+
+    fn do_add_const_short(&mut self, mem: MemoryAccess, val: u16) {
+        self.do_add_const(mem.with_const_offset(1), (val >> 8) as u8);
+        self.do_add_const(mem, (val & 0xff) as u8);
+    }
+
+    fn do_sub_const_short(&mut self, mem: MemoryAccess, val: u16) {
+        self.do_add_const_short(mem, val.wrapping_neg());
+    }
+
+    fn do_clear_short(&mut self, mem: MemoryAccess) {
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem.with_const_offset(1)));
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem));
     }
 
     fn do_begin_loop(&mut self) {
@@ -538,11 +657,9 @@ impl IRGenerator {
         match expression {
 
             Expression::Access(accessor) => {
-                
                 let (mem, data_type) = self.resolve_accessor(accessor)?;
                 self.assert_data_type(&DataType::Byte, &data_type)?;
                 self.do_copy(into, mem, negate);
-
             }
             Expression::AsNum(expr) => {
                 self.evaluate_bool_expression_into(*expr, into)?;
@@ -594,6 +711,69 @@ impl IRGenerator {
 
     }
 
+    fn evaluate_short_expression_into(&mut self, expression: Expression, into: MemoryAccess, negate: bool) -> Result<(), BrainFricError> {
+
+        match expression {
+            Expression::Access(accessor) => {
+                let (mem, data_type) = self.resolve_accessor(accessor)?;
+                self.assert_data_type(&DataType::Short, &data_type)?;
+                self.do_copy_short(into, mem, negate);
+            }
+            Expression::NumberLiteral(value) => {
+                if negate {
+                    self.do_sub_const_short(into, value as u16);
+                }
+                else {
+                    self.do_add_const_short(into, value as u16);
+                }
+            }
+            Expression::Add(expr1, expr2) => {
+
+                // todo, negative case
+                assert!(negate == false);
+
+                self.evaluate_short_expression_into(*expr1, into.clone(), negate)?;
+
+                let old_lower_copy = self.allocate_temporary();
+                self.do_copy(old_lower_copy.clone(), into.clone(), false);
+
+                self.evaluate_short_expression_into(*expr2, into.clone(), negate)?;
+
+                let new_lower_copy = self.allocate_temporary();
+                self.do_copy(new_lower_copy.clone(), into.clone(), false);
+
+                let temp = self.allocate_temporary();
+                let into_upper = into.with_const_offset(1);
+
+                self.do_begin_loop();
+
+                self.do_sub_const(old_lower_copy.clone(), 1);
+                self.do_sub_const(new_lower_copy.clone(), 1);
+
+                self.do_move([temp.clone()], new_lower_copy.clone(), false);
+
+                self.do_begin_loop();
+                self.do_move([new_lower_copy.clone()], temp.clone(), false);
+                self.do_sub_const(into_upper.clone(), 1);
+                self.do_end_loop(temp, true);
+
+                self.do_add_const(into_upper, 1);
+
+                self.do_end_loop(old_lower_copy, false);
+
+                self.do_clear(new_lower_copy);
+
+            }
+            Expression::Subtract(expr1, expr2) => {
+                todo!()
+            }
+            _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Short))
+        }
+
+        Ok(())
+
+    }
+
     fn evaluate_expression_into(&mut self, expression: Expression, expected_type: &DataType, into: MemoryAccess) -> Result<(), BrainFricError> {
 
         match expected_type {
@@ -601,6 +781,8 @@ impl IRGenerator {
                 self.evaluate_bool_expression_into(expression, into),
             DataType::Byte =>
                 self.evaluate_byte_expression_into(expression, into, false),
+            DataType::Short =>
+                self.evaluate_short_expression_into(expression, into, false),
             _ => todo!()
         }
     }

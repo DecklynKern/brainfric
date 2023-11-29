@@ -63,6 +63,7 @@ pub enum Token {
     Star,
 
     At,
+    Dot,
     Ampersand,
     Pipe,
     Dollar
@@ -114,6 +115,7 @@ impl Token {
             "-" => Self::Hypen,
             "*" => Self::Star,
             "@" => Self::At,
+            "." => Self::Dot,
             "&" => Self::Ampersand,
             "|" => Self::Pipe,
             "$" => Self::Dollar,
@@ -135,7 +137,8 @@ impl Token {
 
     pub fn is_specifier_head(&self) -> bool {
         matches!(self,
-            Self::At
+            Self::At |
+            Self::Dot
         )
     }
 

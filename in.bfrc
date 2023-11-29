@@ -1,10 +1,10 @@
-string<10> str
-str <- "lol"
+short a
+short b
+short c
 
-write str
-writeln
+a <- 100
+b <- 200
+c <- a + b
 
-str @ 1 <- 'a'
-
-write str
-writeln
+write c.low
+write c.high

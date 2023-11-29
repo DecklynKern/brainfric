@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::rc::Rc;
 use std::iter::Peekable;
 use std::slice::Iter;
@@ -92,7 +93,9 @@ impl DataType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Specifier {
-    ConstIndex(i32)
+    ConstIndex(i32),
+    Lower,
+    Upper
 }
 
 impl Specifier {
@@ -105,6 +108,14 @@ impl Specifier {
                 Token::At => 
                     // change when array happens
                     expect_token!(tokens, Token::NumberLiteral(idx), {Self::ConstIndex(*idx)}),
+                Token::Dot => match tokens.next() {
+                    Some(Token::Identifier(ident)) => match ident.deref() {
+                        "low" => Self::Lower,
+                        "high" => Self::Upper,
+                        _ => return None
+                    }
+                    _ => return None
+                }
                 _ => unreachable!()
             })
         }
