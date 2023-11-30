@@ -1,10 +1,6 @@
-short a
-short b
-short c
+byte a, b
+bool c
 
-a <- 100
-b <- 200
-c <- a + b
-
-write c.low
-write c.high
+a <- 44
+b <- 45
+c <- a != b

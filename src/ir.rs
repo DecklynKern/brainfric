@@ -645,6 +645,40 @@ impl IRGenerator {
                 self.try_free_access(mem1, is_temp1);
 
             }
+            Expression::Equals(expr1, expr2) => {
+
+                self.do_add_const(into.clone(), 1);
+
+                let temp1 = self.allocate_temporary();
+                self.evaluate_expression_into(*expr1, &DataType::Byte, temp1.clone())?;
+
+                let temp2 = self.allocate_temporary();
+                self.evaluate_expression_into(*expr2, &DataType::Byte, temp2.clone())?;
+
+                self.do_move([temp2.clone()], temp1, true);
+
+                self.do_begin_loop();
+                self.do_sub_const(into, 1);
+                self.do_clear(temp2.clone());
+                self.do_end_loop(temp2, true);
+
+            }
+            Expression::NotEquals(expr1, expr2) => {
+
+                let temp1 = self.allocate_temporary();
+                self.evaluate_expression_into(*expr1, &DataType::Byte, temp1.clone())?;
+
+                let temp2 = self.allocate_temporary();
+                self.evaluate_expression_into(*expr2, &DataType::Byte, temp2.clone())?;
+
+                self.do_move([temp2.clone()], temp1, true);
+
+                self.do_begin_loop();
+                self.do_add_const(into, 1);
+                self.do_clear(temp2.clone());
+                self.do_end_loop(temp2, true);
+
+            }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Bool))
         };
 
@@ -765,7 +799,43 @@ impl IRGenerator {
 
             }
             Expression::Subtract(expr1, expr2) => {
-                todo!()
+
+                todo!("not done yet");
+
+                // todo, negative case
+                assert!(negate == false);
+
+                self.evaluate_short_expression_into(*expr1, into.clone(), negate)?;
+
+                let old_lower_copy = self.allocate_temporary();
+                self.do_copy(old_lower_copy.clone(), into.clone(), false);
+
+                self.evaluate_short_expression_into(*expr2, into.clone(), true)?;
+
+                let new_lower_copy = self.allocate_temporary();
+                self.do_copy(new_lower_copy.clone(), into.clone(), false);
+
+                let temp = self.allocate_temporary();
+                let into_upper = into.with_const_offset(1);
+
+                self.do_begin_loop();
+
+                self.do_sub_const(old_lower_copy.clone(), 1);
+                self.do_sub_const(new_lower_copy.clone(), 1);
+
+                self.do_move([temp.clone()], old_lower_copy.clone(), false);
+
+                self.do_begin_loop();
+                self.do_move([old_lower_copy.clone()], temp.clone(), false);
+                self.do_add_const(into_upper.clone(), 1);
+                self.do_end_loop(temp, true);
+
+                self.do_sub_const(into_upper, 1);
+
+                self.do_end_loop(new_lower_copy, false);
+
+                self.do_clear(old_lower_copy);
+
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Short))
         }
@@ -924,6 +994,15 @@ impl IRGenerator {
 
                     let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;
                     self.do_write(mem.clone());
+                    self.try_free_access(mem, is_temp);
+
+                }
+                StatementBody::WriteNum(expression) => {
+
+                    let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;
+
+                    todo!();
+
                     self.try_free_access(mem, is_temp);
 
                 }

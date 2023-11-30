@@ -39,6 +39,7 @@ pub enum Token {
     End,
 
     Write,
+    WriteNum,
     WriteLine,
     Read,
 
@@ -58,6 +59,7 @@ pub enum Token {
     SetTo,
 
     Equal,
+    NotEqual,
     Plus,
     Hypen,
     Star,
@@ -90,6 +92,7 @@ impl Token {
             "if" => Self::If,
             "end" => Self::End,
             "write" => Self::Write,
+            "writenum" => Self::WriteNum,
             "writeln" => Self::WriteLine,
             "read" => Self::Read,
             _ => return None
@@ -111,6 +114,7 @@ impl Token {
             "!" => Self::Exclamation,
             "<-" => Self::SetTo,
             "=" => Self::Equal,
+            "!=" => Self::NotEqual,
             "+" => Self::Plus,
             "-" => Self::Hypen,
             "*" => Self::Star,

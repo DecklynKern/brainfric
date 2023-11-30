@@ -170,6 +170,7 @@ pub enum Expression {
     StringLiteral(Rc<str>),
 
     Equals(Box<Expression>, Box<Expression>),
+    NotEquals(Box<Expression>, Box<Expression>),
     LessThan(Box<Expression>, Box<Expression>),
     GreaterThan(Box<Expression>, Box<Expression>),
 
@@ -257,6 +258,7 @@ impl Expression {
                     Self::try_parse_term(tokens)
                         .and_then(|term2| Some(match op {
                             Token::Equal => Self::Equals,
+                            Token::NotEqual => Self::NotEquals,
                             Token::OpenAngle => Self::LessThan,
                             Token::CloseAngle => Self::GreaterThan,
                             Token::Plus => Self::Add,
@@ -287,6 +289,7 @@ pub enum StatementBody {
     LeftShift(Accessor, u32),
     RightShift(Accessor, u32),
     Write(Expression),
+    WriteNum(Expression),
     Read(Accessor),
     While(Expression, Vec<Statement>),
     If(Expression, Vec<Statement>)
@@ -392,6 +395,16 @@ impl StatementBody {
                 };
                 
                 Self::Write(expression)
+                
+            }
+            Token::WriteNum => {
+
+                let (Some(expression), true) = (Expression::try_parse(tokens), tokens.is_empty())
+                else {
+                    err!(line_num, ParseError::InvalidExpression);
+                };
+                
+                Self::WriteNum(expression)
                 
             }
             Token::WriteLine => {
