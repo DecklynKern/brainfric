@@ -157,7 +157,7 @@ fn ir_to_lowered_check() {
 
     let mut generated_ir = generate_ir(statements!()).unwrap_or_else(|_| panic!());
     
-    optimize(&mut generated_ir);
+    //optimize(&mut generated_ir);
 
     assert_eq!(
         lower(generated_ir.0),

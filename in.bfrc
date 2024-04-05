@@ -1,6 +1,10 @@
-byte a, b
-bool c
-
-a <- 44
-b <- 45
-c <- a != b
+byte x, y, z
+x <- 30
+y <- 999
+writenum x
+write " + "
+writenum y
+write " = "
+z <- x + y
+writenum z
+writeln

@@ -48,25 +48,25 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
         println!();
     }
 
-    if args::arg_do_optimization() {
+    // if args::arg_do_optimization() {
    
-        let passes = optimize::optimize(&mut ir);
+    //     let passes = optimize::optimize(&mut ir);
 
-        if args::arg_show_optimization() {
+    //     if args::arg_show_optimization() {
 
-            println!(
-                "=== FINAL OPTIMIZER PASS ({} STAGE 1 PASSES, {} STAGE 2 PASSES) ===",
-                passes[0],
-                passes[1]
-            );
+    //         println!(
+    //             "=== FINAL OPTIMIZER PASS ({} STAGE 1 PASSES, {} STAGE 2 PASSES) ===",
+    //             passes[0],
+    //             passes[1]
+    //         );
 
-            for ir_statement in &ir.0 {
-                println!("{ir_statement:?}");
-            }
-            println!();
+    //         for ir_statement in &ir.0 {
+    //             println!("{ir_statement:?}");
+    //         }
+    //         println!();
 
-        }
-    }
+    //     }
+    // }
 
     let mut bf_code = lower::lower(ir.0);
 

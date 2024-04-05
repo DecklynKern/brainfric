@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::mem::{swap, take, replace};
+use std::num::NonZeroUsize;
 
 use crate::args::arg_allow_delete_variables;
 use crate::error::*;
@@ -69,7 +70,7 @@ use crate::parse::*;
 //     Temporary(Byte)
 // }
 
-// pub struct _MemoryAccess {
+// pub struct _Identifier {
 //     pub identifier: Rc<RefCell<dyn Variable>>,
 //     pub offsets: Box<[Offset]>
 // }
@@ -77,23 +78,20 @@ use crate::parse::*;
 // pub enum _IRStatement {
 //     Alloc(_Allocation),
 //     Free(Identifier),
-//     AddConst(_MemoryAccess, u8),
-//     MoveCell(Box<[(MemoryAccess, bool)]>, MemoryAccess),
-//     WriteByte(MemoryAccess),
-//     WriteByteSequence(MemoryAccess, usize),
-//     WriteString(MemoryAccess),
-//     ReadByte(MemoryAccess),
-//     Loop(MemoryAccess, IRBlock, bool)
+//     AddConst(_Identifier, u8),
+//     MoveCell(Box<[(Identifier, bool)]>, Identifier),
+//     WriteByte(Identifier),
+//     WriteByteSequence(Identifier, usize),
+//     WriteString(Identifier),
+//     ReadByte(Identifier),
+//     Loop(Identifier, IRBlock, bool)
 // }
-
-
-
 
 pub type Identifier = usize;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Allocation {
-    Variable(Identifier, DataType),
+    Variable(Identifier),
     Temporary(Identifier)
 }
 
@@ -101,61 +99,21 @@ impl Allocation {
 
     pub fn can_delete(&self) -> bool {
         match self {
-            Self::Variable(_, _) => arg_allow_delete_variables(),
+            Self::Variable(_) => arg_allow_delete_variables(),
             Self::Temporary(_) => true
         }
     }
 
     pub fn get_identifier(&self) -> Identifier {
         match self {
-            Self::Variable(id, _) | Self::Temporary(id) => *id
-        }
-    }
-
-    pub fn get_size(&self) -> usize {
-        match self {
-            Self::Variable(_, data_type) => data_type.get_size(),
-            Self::Temporary(_) => 1
+            Self::Variable(id) | Self::Temporary(id) => *id
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum Offset {
+pub enum ComplexOffset {
     Constant(i32)
-}
-
-#[derive(PartialEq, Eq, Clone, Hash)]
-pub struct MemoryAccess {
-    pub identifier: Identifier,
-    pub offsets: Box<[Offset]>
-}
-
-impl std::fmt::Debug for MemoryAccess {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemAccess({}, {:?})", self.identifier, self.offsets)
-    }
-}
-
-impl MemoryAccess {
-
-    pub fn from_identifier(id: Identifier) -> Self {
-        Self {
-            identifier: id,
-            offsets: Box::new([])
-        }
-    }
-
-    pub fn with_const_offset(&self, offset: i32) -> Self {
-
-        let mut offsets: Vec<_> = self.offsets.clone().into();
-        offsets.push(Offset::Constant(offset));
-
-        Self {
-            identifier: self.identifier,
-            offsets: offsets.into()
-        }
-    }
 }
 
 #[derive(PartialEq, Eq, Default)]
@@ -165,36 +123,6 @@ impl IRBlock {
 
     pub fn new() -> Self {
         Self(Vec::new())
-    }
-
-    pub fn get_mutated_accesses(&self) -> HashSet<&MemoryAccess> {
-
-        let mut used = HashSet::new();
-
-        for statement in &self.0 {
-            used.extend(statement.get_mutated_accesses().iter());
-        }
-
-        used
-
-    }
-
-    pub fn contains_io(&self) -> bool {
-        self.0.iter().any(|statement|
-            matches!(statement, IRStatement::WriteByte(_) | IRStatement::ReadByte(_))
-        )
-    }
-
-    pub fn uses_access(&self, mem: &MemoryAccess) -> bool {
-        self.0.iter().any(|statement| statement.uses_access(mem))
-    }
-    
-    pub fn reads_identifier_value(&self, id: Identifier) -> bool {
-        self.0.iter().any(|statement| statement.reads_identifier_value(id))
-    }
-
-    pub fn delete_identifier(&mut self, id: Identifier) -> bool {
-        self.0.iter_mut().all(|statement| statement.delete_identifier(id))
     }
 }
 
@@ -216,137 +144,14 @@ impl std::fmt::Debug for IRBlock {
 pub enum IRStatement {
     Alloc(Allocation),
     Free(Identifier),
-    AddConst(MemoryAccess, u8),
-    MoveCell(Box<[(MemoryAccess, bool)]>, MemoryAccess),
-    WriteByte(MemoryAccess),
-    WriteByteSequence(MemoryAccess, usize),
-    WriteString(MemoryAccess),
-    ReadByte(MemoryAccess),
-    Loop(MemoryAccess, IRBlock, bool)
-}
-
-impl IRStatement {
-
-    pub fn get_mutated_accesses(&self) -> HashSet<&MemoryAccess> {
-
-        match self {
-            Self::Alloc(_) | Self::Free(_) | Self::WriteByte(_) | Self::WriteByteSequence(_, _) |
-            Self::WriteString(_) | Self::ReadByte(_) =>
-                HashSet::new(),
-            Self::AddConst(mem, _) => {
-                HashSet::from([mem])
-            }
-            Self::MoveCell(to, from) => {
-                let mut ids = HashSet::from_iter(to.iter().map(|cell| &cell.0));
-                ids.insert(from);
-                ids
-            }
-            Self::Loop(_, block, _) =>
-                block.get_mutated_accesses()
-        }
-    }
-
-    pub fn uses_access(&self, check_mem: &MemoryAccess) -> bool {
-
-        match self {
-            Self::MoveCell(to, from) =>
-                from == check_mem || to.iter().any(|cell| cell.0 == *check_mem),
-            Self::Alloc(alloc) =>
-                alloc.get_identifier() == check_mem.identifier,
-            Self::AddConst(mem, _) | Self::WriteByte(mem) |
-            Self::ReadByte(mem) =>
-                mem == check_mem,
-            Self::WriteByteSequence(mem, _) | Self::WriteString(mem) =>
-                mem.identifier == check_mem.identifier,
-            Self::Free(id) =>
-                *id == check_mem.identifier,
-            Self::Loop(mem, block, _) =>
-                mem == check_mem || block.uses_access(check_mem)
-        }
-    }
-
-    pub fn reads_identifier_value(&self, id: Identifier) -> bool {
-
-        match self {
-            Self::MoveCell(_, from)  =>
-                from.identifier == id,
-            Self::WriteByte(mem) | Self::WriteByteSequence(mem, _) |
-            Self::WriteString(mem) | Self::ReadByte(mem) =>
-                mem.identifier == id,
-            Self::Loop(mem, block, _) =>
-                mem.identifier == id || block.reads_identifier_value(id),
-            Self::Alloc(_) | Self::AddConst(_, _) | Self::Free(_) =>
-                false
-        }
-    }
-
-    pub fn delete_identifier(&mut self, id: Identifier) -> bool {
-
-        match self {
-            Self::Alloc(alloc) =>
-                alloc.get_identifier() == id,
-            Self::AddConst(mem, _) =>
-                mem.identifier == id,
-            Self::Free(check_id) =>
-                *check_id == id,
-            Self::MoveCell(to, from) => {
-
-                if from.identifier == id {
-                    panic!("attempted to delete used value")
-                }
-
-                let _ = replace(
-                    to,
-                    to.iter()
-                        .filter(|temp| temp.0.identifier != id)
-                        .cloned()
-                        .collect::<Box<_>>()
-                );
-
-                false
-
-            }
-            Self::WriteByte(mem) | Self::WriteByteSequence(mem, _) |
-            Self::WriteString(mem) | Self::ReadByte(mem) => {
-
-                if mem.identifier == id {
-                    unreachable!();
-                }
-                    
-                false
-
-            }
-            Self::Loop(mem, block, _) => {
-
-                if mem.identifier == id {
-                    panic!("attempted to delete used value")
-                }
-
-                block.delete_identifier(id);
-
-                false
-
-            }
-        }
-    }
-
-    fn get_unitary_identifier(&self) -> Option<Identifier> {
-        
-        match self {
-            Self::Alloc(alloc) => Some(alloc.get_identifier()),
-            Self::AddConst(mem, _) | Self::WriteByte(mem) => Some(mem.identifier),
-            _ => None
-        }
-    }
-
-    pub fn can_swap_previous(&self, previous: &Self) -> bool {
-
-        self.get_unitary_identifier().is_some_and(
-            |id_this| previous.get_unitary_identifier().is_some_and(
-                |id_other| id_this < id_other
-            )
-        )
-    }
+    AddConst(Identifier, u8),
+    MoveCell(Box<[(Identifier, bool)]>, Identifier),
+    WriteByte(Identifier),
+    WriteByteSequence(Identifier, usize),
+    WriteString(Identifier),
+    WriteByteAsNumber {id: Identifier, temp_block: Identifier}, // temp_block = 6 cells
+    ReadByte(Identifier),
+    Loop(Identifier, IRBlock, bool)
 }
 
 pub fn generate_ir(statements: Vec<Statement>) -> Result<IRBlock, BrainFricError> {
@@ -374,18 +179,24 @@ struct IRGenerator {
 impl IRGenerator {
 
     fn do_free(&mut self, id: Identifier) {
-        self.do_clear(MemoryAccess::from_identifier(id));
-        self.ir.0.push(IRStatement::Free(id));
+        self.free_block(id, 1);
     }
 
-    fn do_free_access(&mut self, mem: MemoryAccess) {
-        self.do_free(mem.identifier);
+    fn free_block(&mut self, id: Identifier, size: u32) {
+        for i in (id..(id + size as Identifier)).rev() {
+            self.do_clear(i);
+            self.ir.0.push(IRStatement::Free(i));
+        }
     }
 
-    fn try_free_access(&mut self, mem: MemoryAccess, is_temp: bool) {
+    fn do_free_access(&mut self, mem: Identifier) {
+        self.do_free(mem);
+    }
+
+    fn try_free_access(&mut self, mem: Identifier, is_temp: bool) {
         if is_temp {
-            let id = mem.identifier;
-            self.do_clear(MemoryAccess::from_identifier(id));
+            let id = mem;
+            self.do_clear(id);
             self.ir.0.push(IRStatement::Free(id));
         }
     }
@@ -400,27 +211,39 @@ impl IRGenerator {
 
     }
 
-    fn allocate_temporary(&mut self) -> MemoryAccess {
-        
-        let alloc = Allocation::Temporary(self.next_identifier);
-        self.ir.0.push(IRStatement::Alloc(alloc));
-        
-        self.next_identifier += 1;
-        MemoryAccess::from_identifier(self.next_identifier - 1)
-        
+    fn allocate_temporary(&mut self) -> Identifier {
+        self.allocate_temporary_block(1)
     }
 
-    fn allocate_variable(&mut self, name: Name, data_type: DataType) -> MemoryAccess {
+    fn allocate_temporary_block(&mut self, size: u32) -> Identifier {
+
+        let id = self.next_identifier;
+
+        for i in 0..size {
+            self.ir.0.push(IRStatement::Alloc(Allocation::Temporary(self.next_identifier)));
+            self.next_identifier += 1;
+        }
+
+        id
+
+    }
+
+    fn allocate_variable(&mut self, name: Name, data_type: DataType) -> Identifier {
+
+        let size = data_type.get_size();
+
+        for id in self.next_identifier..self.next_identifier + size {
+            self.ir.0.push(IRStatement::Alloc(Allocation::Variable(id)));
+        }
         
-        self.ir.0.push(IRStatement::Alloc(Allocation::Variable(self.next_identifier, data_type.clone())));
         self.name_table.insert(name, (self.next_identifier, data_type));
 
-        self.next_identifier += 1;
-        MemoryAccess::from_identifier(self.next_identifier - 1)
+        self.next_identifier += size;
+        self.next_identifier - 1
 
     }
 
-    fn resolve_accessor(&self, accessor: Accessor) -> Result<(MemoryAccess, DataType), BrainFricError> {
+    fn resolve_accessor(&self, accessor: Accessor) -> Result<(Identifier, DataType), BrainFricError> {
 
         let (id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
             ||
@@ -429,7 +252,9 @@ impl IRGenerator {
                 Ok((id, data_type.clone()))
         )?;
 
-        let mut sized_specifiers = Vec::new();
+        // todo: add cases for special accessors
+
+        let mut true_id = *id;
 
         for specifier in accessor.specifiers.iter() {
             match (specifier, data_type) {
@@ -439,7 +264,7 @@ impl IRGenerator {
                         err!(self.current_line_num, IRError::OutOfBoundsAccess);
                     }
 
-                    sized_specifiers.push(Offset::Constant(*idx * inner_type.get_size() as i32));
+                    true_id += *idx as usize * inner_type.get_size();
                     data_type = *inner_type;
                     
                 }
@@ -449,7 +274,7 @@ impl IRGenerator {
                         err!(self.current_line_num, IRError::OutOfBoundsAccess);
                     }
 
-                    sized_specifiers.push(Offset::Constant(*idx + 1));
+                    true_id += *idx as usize + 1;
                     data_type = DataType::Byte;
                     
                 }
@@ -457,23 +282,17 @@ impl IRGenerator {
                     data_type = DataType::Byte;
                 }
                 (Specifier::Upper, DataType::Short) => {
-                    sized_specifiers.push(Offset::Constant(1));
+                    true_id += 1;
                     data_type = DataType::Byte;
                 }
                 _ => todo!("bad access")
             }
         }
 
-        Ok((
-            MemoryAccess {
-                identifier: *id,
-                offsets: sized_specifiers.into()
-            },
-            data_type
-        ))
+        Ok((true_id, data_type))
     }
 
-    fn do_move_raw<const N: usize>(&mut self, to: [(MemoryAccess, bool); N], from: MemoryAccess) {
+    fn do_move_raw<const N: usize>(&mut self, to: [(Identifier, bool); N], from: Identifier) {
         self.ir.0.push(IRStatement::MoveCell(
             to.iter()
                 .map(|(mem, negate)| (mem.clone(), *negate))
@@ -482,53 +301,61 @@ impl IRGenerator {
         )
     }
 
-    fn do_move<const N: usize>(&mut self, to: [MemoryAccess; N], from: MemoryAccess, negate: bool) {
+    fn do_move<const N: usize>(&mut self, to: [Identifier; N], from: Identifier, negate: bool) {
         self.ir.0.push(IRStatement::MoveCell(
             to.into_iter().map(|mem| (mem, negate)).collect(),
             from
         ));
     }
 
-    fn do_copy(&mut self, to: MemoryAccess, from: MemoryAccess, negate: bool) {
+    fn do_copy(&mut self, to: Identifier, from: Identifier, negate: bool) {
         let temp = self.allocate_temporary();
         self.do_move([temp.clone(), to], from.clone(), false);
         self.do_move([from], temp.clone(), negate);
-        self.do_free(temp.identifier);
+        self.do_free(temp);
     }
 
-    fn do_clear(&mut self, mem: MemoryAccess) {
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem));
+    fn do_clear(&mut self, id: Identifier) {
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), id));
     }
 
-    fn do_add_const(&mut self, mem: MemoryAccess, val: u8) {
-        self.ir.0.push(IRStatement::AddConst(mem, val));
+    fn do_add_const(&mut self, id: Identifier, val: u8) {
+        self.ir.0.push(IRStatement::AddConst(id, val));
     }
 
-    fn do_sub_const(&mut self, mem: MemoryAccess, val: u8) {
-        self.do_add_const(mem, val.wrapping_neg());
+    fn do_sub_const(&mut self, id: Identifier, val: u8) {
+        self.do_add_const(id, val.wrapping_neg());
     }
 
-    fn do_write(&mut self, mem: MemoryAccess) {
-        self.ir.0.push(IRStatement::WriteByte(mem));
+    fn do_write(&mut self, id: Identifier) {
+        self.ir.0.push(IRStatement::WriteByte(id));
     }
 
-    fn do_write_byte_seq(&mut self, mem: MemoryAccess, len: usize) {
-        self.ir.0.push(IRStatement::WriteByteSequence(mem, len));
+    fn do_write_byte_seq(&mut self, id: Identifier, len: usize) {
+        self.ir.0.push(IRStatement::WriteByteSequence(id, len));
     }
 
-    fn do_write_string(&mut self, mem: MemoryAccess) {
-        self.ir.0.push(IRStatement::WriteString(mem));
+    fn do_write_string(&mut self, id: Identifier) {
+        self.ir.0.push(IRStatement::WriteString(id));
     }
 
-    fn do_read(&mut self, mem: MemoryAccess) {
-        self.ir.0.push(IRStatement::ReadByte(mem));
+    fn do_write_byte_as_number(&mut self, id: Identifier) {
+        
+        let temp_block = self.allocate_temporary_block(6);
+        self.ir.0.push(IRStatement::WriteByteAsNumber { id, temp_block });
+
+        self.free_block(temp_block, 6);
     }
 
-    fn do_copy_short(&mut self, to_low: MemoryAccess, from_low: MemoryAccess, negate: bool) {
+    fn do_read(&mut self, id: Identifier) {
+        self.ir.0.push(IRStatement::ReadByte(id));
+    }
+
+    fn do_copy_short(&mut self, to_low: Identifier, from_low: Identifier, negate: bool) {
 
         let temp = self.allocate_temporary();
-        let to_high = to_low.with_const_offset(1);
-        let from_high = from_low.with_const_offset(1);
+        let to_high = to_low + 1;
+        let from_high = from_low + 1;
 
         self.do_move([temp.clone(), to_low], from_low.clone(), false);
         self.do_move([from_low], temp.clone(), negate);
@@ -536,34 +363,34 @@ impl IRGenerator {
         self.do_move([temp.clone(), to_high], from_high.clone(), false);
         self.do_move([from_high], temp.clone(), negate);
 
-        self.do_free(temp.identifier);
+        self.do_free(temp);
 
     }
 
-    fn do_add_const_short(&mut self, mem: MemoryAccess, val: u16) {
-        self.do_add_const(mem.with_const_offset(1), (val >> 8) as u8);
-        self.do_add_const(mem, (val & 0xff) as u8);
+    fn do_add_const_short(&mut self, id: Identifier, val: u16) {
+        self.do_add_const(id, (val & 0xff) as u8);
+        self.do_add_const(id + 1, (val >> 8) as u8);
     }
 
-    fn do_sub_const_short(&mut self, mem: MemoryAccess, val: u16) {
-        self.do_add_const_short(mem, val.wrapping_neg());
+    fn do_sub_const_short(&mut self, id: Identifier, val: u16) {
+        self.do_add_const_short(id, val.wrapping_neg());
     }
 
-    fn do_clear_short(&mut self, mem: MemoryAccess) {
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem.with_const_offset(1)));
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), mem));
+    fn do_clear_short(&mut self, id: Identifier) {
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), id));
+        self.ir.0.push(IRStatement::MoveCell(Box::default(), id + 1));
     }
 
     fn do_begin_loop(&mut self) {
         self.loop_stack.push(take(&mut self.ir));
     }
 
-    fn do_end_loop(&mut self, mem: MemoryAccess, is_if: bool) {
+    fn do_end_loop(&mut self, mem: Identifier, is_if: bool) {
         swap(&mut self.ir, self.loop_stack.last_mut().unwrap());
         self.ir.0.push(IRStatement::Loop(mem, self.loop_stack.pop().unwrap(), is_if));
     }
 
-    fn evaluate_bool_expression_into(&mut self, expression: Expression, into: MemoryAccess) -> Result<(), BrainFricError> {
+    fn evaluate_bool_expression_into(&mut self, expression: Expression, into: Identifier) -> Result<(), BrainFricError> {
 
         match expression {
 
@@ -588,7 +415,7 @@ impl IRGenerator {
                 self.do_clear(temp.clone());
                 self.do_end_loop(temp.clone(), true);
                 
-                self.do_free(temp.identifier);
+                self.do_free(temp);
                 self.try_free_access(mem, is_temp);
 
             }
@@ -604,7 +431,7 @@ impl IRGenerator {
                 self.do_sub_const(into, 1);
                 self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.identifier);
+                self.do_free(temp);
 
             }
             Expression::And(expr1, expr2) => {
@@ -621,7 +448,7 @@ impl IRGenerator {
                 self.do_sub_const(temp.clone(), 1);
                 self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.identifier);
+                self.do_free(temp);
                 self.try_free_access(mem2, is_temp2);
                 self.try_free_access(mem1, is_temp1);
 
@@ -640,7 +467,7 @@ impl IRGenerator {
                 self.do_clear(temp.clone());
                 self.do_end_loop(temp.clone(), true);
 
-                self.do_free(temp.identifier);
+                self.do_free(temp);
                 self.try_free_access(mem2, is_temp2);
                 self.try_free_access(mem1, is_temp1);
 
@@ -686,7 +513,7 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_byte_expression_into(&mut self, expression: Expression, into: MemoryAccess, negate: bool) -> Result<(), BrainFricError> {
+    fn evaluate_byte_expression_into(&mut self, expression: Expression, into: Identifier, negate: bool) -> Result<(), BrainFricError> {
 
         match expression {
 
@@ -745,7 +572,7 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_short_expression_into(&mut self, expression: Expression, into: MemoryAccess, negate: bool) -> Result<(), BrainFricError> {
+    fn evaluate_short_expression_into(&mut self, expression: Expression, into: Identifier, negate: bool) -> Result<(), BrainFricError> {
 
         match expression {
             Expression::Access(accessor) => {
@@ -777,7 +604,7 @@ impl IRGenerator {
                 self.do_copy(new_lower_copy.clone(), into.clone(), false);
 
                 let temp = self.allocate_temporary();
-                let into_upper = into.with_const_offset(1);
+                let into_upper = into + 1;
 
                 self.do_begin_loop();
 
@@ -816,7 +643,7 @@ impl IRGenerator {
                 self.do_copy(new_lower_copy.clone(), into.clone(), false);
 
                 let temp = self.allocate_temporary();
-                let into_upper = into.with_const_offset(1);
+                let into_upper = into + 1;
 
                 self.do_begin_loop();
 
@@ -844,7 +671,7 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_expression_into(&mut self, expression: Expression, expected_type: &DataType, into: MemoryAccess) -> Result<(), BrainFricError> {
+    fn evaluate_expression_into(&mut self, expression: Expression, expected_type: &DataType, into: Identifier) -> Result<(), BrainFricError> {
 
         match expected_type {
             DataType::Bool =>
@@ -857,7 +684,7 @@ impl IRGenerator {
         }
     }
 
-    fn evaluate_expression(&mut self, expression: Expression, expected_type: &DataType) -> Result<(MemoryAccess, bool), BrainFricError> {
+    fn evaluate_expression(&mut self, expression: Expression, expected_type: &DataType) -> Result<(Identifier, bool), BrainFricError> {
         
         Ok(match expression {
             Expression::Access(accessor) => {
@@ -907,7 +734,7 @@ impl IRGenerator {
 
                         for (char_num, char) in string.chars().enumerate() {
 
-                            let with_offset = mem.with_const_offset(char_num as i32 + type_offset);
+                            let with_offset = mem + char_num + type_offset;
 
                             self.do_clear(with_offset.clone());
                             self.do_add_const(with_offset, char as u8);
@@ -947,10 +774,7 @@ impl IRGenerator {
                     // make more sophisticated
 
                     for cell in 0..data_type.get_size() {
-                        self.do_clear(MemoryAccess {
-                            identifier: mem.identifier,
-                            offsets: Box::new([Offset::Constant(cell as i32)])
-                        });
+                        self.do_clear(mem + cell);
                     }
                 }
                 StatementBody::LeftShift(accessor, amount) => {
@@ -1000,8 +824,7 @@ impl IRGenerator {
                 StatementBody::WriteNum(expression) => {
 
                     let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;
-
-                    todo!();
+                    self.do_write_byte_as_number(mem);
 
                     self.try_free_access(mem, is_temp);
 
@@ -1019,10 +842,10 @@ impl IRGenerator {
 
                         let (mem, data_type) = self.resolve_accessor(accessor)?;
                         self.assert_data_type(&data_type, &DataType::Bool)?;
-                        
+
                         self.do_begin_loop();
                         let loop_ir = self.generate_ir(loop_statements)?;
-                        self.ir.0.extend(loop_ir.0); 
+                        self.ir.0.extend(loop_ir.0);
                         self.do_end_loop(mem, false);
 
                         continue;
@@ -1061,7 +884,7 @@ impl IRGenerator {
                     self.do_clear(temp.clone());
                     self.do_end_loop(temp.clone(), true);
 
-                    self.do_free(temp.identifier);
+                    self.do_free(temp);
 
                 }
             }

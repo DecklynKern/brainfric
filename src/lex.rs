@@ -167,6 +167,7 @@ impl Token {
     pub fn is_binary_operator(&self) -> bool {
         matches!(self,
             Self::Equal |
+            Self::NotEqual |
             Self::OpenAngle |
             Self::CloseAngle |
             Self::Plus |

@@ -6,7 +6,7 @@ pub fn lower(ir: Vec<IRStatement>) -> String {
     
     let mut lowerer = Lowerer {
         bf_code: String::new(),
-        data_head: DataHeadState::KnownCell(0),
+        data_head: 0,
         stack_pointer: 0,
         identifier_table: HashMap::new()
     };
@@ -16,43 +16,14 @@ pub fn lower(ir: Vec<IRStatement>) -> String {
 
 }
 
-struct Memory {
-    address: usize,
-    size: usize
-}
-
-enum DataHeadState {
-    KnownCell(usize),
-    Special(MemoryAccess)
-}
-
 struct Lowerer {
     bf_code: String,
-    data_head: DataHeadState,
+    data_head: usize,
     stack_pointer: usize,
-    identifier_table: HashMap<Identifier, Memory>
+    identifier_table: HashMap<Identifier, usize>
 }
 
 impl Lowerer {
-
-    fn return_to_known_cell(&mut self) {
-
-        let DataHeadState::Special(mem) = &self.data_head else {
-            return;
-        };
-
-        for specifier in mem.offsets.iter().rev() {
-            match specifier {
-                Offset::Constant(offset) => {
-                    let jump = self.get_jump_raw(-offset);
-                    self.bf_code.push_str(&jump);
-                }
-            }
-        }
-
-        self.data_head = DataHeadState::KnownCell(self.identifier_table[&mem.identifier].address);
-
-    }
 
     fn get_jump_raw(&self, jump_size: i32) -> Box<str> {
         if jump_size > 0 {
@@ -77,33 +48,30 @@ impl Lowerer {
         );
     }
 
-    fn jump_inner(&mut self, mem: MemoryAccess) {
-
-        let DataHeadState::KnownCell(current_position) = self.data_head else {
-            unreachable!();
-        };
+    fn jump_to(&mut self, mem: Identifier) {
         
-        let id_address = self.identifier_table[&mem.identifier].address;
-        self.jump_diff(current_position, id_address);
-        
-        for specifier in mem.offsets.iter() {
-            match specifier {
-                Offset::Constant(offset) => self.bf_code.push_str(&self.get_jump_raw(*offset))
-            }
-        }
+        let id_address = self.identifier_table[&mem];
+        self.jump_diff(self.data_head, id_address);
+        self.data_head = id_address;
 
-        self.data_head = DataHeadState::Special(mem);
-    
     }
 
-    fn jump_to(&mut self, mem: MemoryAccess) {
+    fn interpret_named_code<const N: usize>(&mut self, code: &str, ids: [Identifier; N]) {
+        for char in code.chars() {
 
-        // be more intellegent about jumps inside the same object
-        if let DataHeadState::Special(data_head) = &self.data_head && mem == *data_head {
-        }
-        else {
-            self.return_to_known_cell();
-            self.jump_inner(mem);
+            if char.is_whitespace() {
+                continue;
+            }
+
+            match char {
+                'a' => self.jump_to(ids[0]),
+                'b' => self.jump_to(ids[1]),
+                'c' => self.jump_to(ids[2]),
+                'd' => self.jump_to(ids[3]),
+                'e' => self.jump_to(ids[4]),
+                'f' => self.jump_to(ids[5]),
+                _ => self.bf_code.push(char)
+            }
         }
     }
 
@@ -114,23 +82,15 @@ impl Lowerer {
             match ir_statement {
 
                 IRStatement::Alloc(allocation) => {
-
-                    let size = allocation.get_size();
-
-                    self.identifier_table.insert(allocation.get_identifier(), Memory {
-                        address: self.stack_pointer,
-                        size
-                    });
-
-                    self.stack_pointer += size;
-
+                    self.identifier_table.insert(allocation.get_identifier(), self.stack_pointer);
+                    self.stack_pointer += 1;
                 }
                 IRStatement::Free(reg) => {
 
-                    let memory = &self.identifier_table[&reg];
+                    let memory = self.identifier_table[&reg];
                         
-                    if self.stack_pointer - memory.size == memory.address {
-                        self.stack_pointer -= memory.size;
+                    if self.stack_pointer - 1 == memory {
+                        self.stack_pointer -= 1;
                     }
                 }
                 IRStatement::AddConst(mem, num) => {
@@ -179,6 +139,17 @@ impl Lowerer {
                 IRStatement::WriteString(mem) => {
                     self.jump_to(mem);
                     self.bf_code.push_str(">[.>]<[<]");
+                }
+                IRStatement::WriteByteAsNumber { id, temp_block } => {
+                    self.interpret_named_code(
+                        "b>++++++++++<a
+                        [-b+>-[>+>>]>[+[-<+>]>+>>]<<<<<a]b>[-]>>>++++++++++<
+                        [->-[>+>>]>[+[-<+>]>+>>]<<<<<]>[-]>>
+                        [>++++++[-<++++++++>]<.<<+>+>[-]]<
+                        [<[->-<]++++++[->++++++++<]>.[-]]<<++++++
+                        [-<++++++++>]<.[-]<<[-a+b]",
+                        [id, temp_block]
+                    );
                 }
                 IRStatement::Loop(mem, block, _) => {
                     self.jump_to(mem.clone());

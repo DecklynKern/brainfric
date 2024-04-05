@@ -93,7 +93,7 @@ impl DataType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Specifier {
-    ConstIndex(i32),
+    ConstIndex(u32),
     Lower,
     Upper
 }
@@ -107,7 +107,7 @@ impl Specifier {
             Some(match tokens.next().unwrap() {
                 Token::At => 
                     // change when array happens
-                    expect_token!(tokens, Token::NumberLiteral(idx), {Self::ConstIndex(*idx)}),
+                    expect_token!(tokens, Token::NumberLiteral(idx), {Self::ConstIndex(*idx as u32)}),
                 Token::Dot => match tokens.next() {
                     Some(Token::Identifier(ident)) => match ident.deref() {
                         "low" => Self::Lower,
@@ -272,7 +272,7 @@ impl Expression {
                 }
                 else {
                     None
-                }
+            }   
             }
             None => Some(term1)
         })
