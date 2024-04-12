@@ -11,6 +11,7 @@ pub type Name = Rc<str>;
 pub enum Token {
 
     Comment,
+    Newline,
 
     Identifier(Name),
 
@@ -36,6 +37,8 @@ pub enum Token {
 
     While,
     If,
+    Switch,
+    Case,
     End,
 
     Write,
@@ -63,6 +66,7 @@ pub enum Token {
     Plus,
     Hypen,
     Star,
+    ForwardSlash,
 
     At,
     Dot,
@@ -90,6 +94,8 @@ impl Token {
             "rshift" => Self::RightShift,
             "while" => Self::While,
             "if" => Self::If,
+            "switch" => Self::Switch,
+            "case" => Self::Case,
             "end" => Self::End,
             "write" => Self::Write,
             "writenum" => Self::WriteNum,
@@ -116,6 +122,7 @@ impl Token {
             "=" => Self::Equal,
             "!=" => Self::NotEqual,
             "+" => Self::Plus,
+            "/" => Self::ForwardSlash,
             "-" => Self::Hypen,
             "*" => Self::Star,
             "@" => Self::At,
@@ -163,33 +170,25 @@ impl Token {
             Self::Exclamation
         )
     }
-
-    pub fn is_binary_operator(&self) -> bool {
-        matches!(self,
-            Self::Equal |
-            Self::NotEqual |
-            Self::OpenAngle |
-            Self::CloseAngle |
-            Self::Plus |
-            Self::Hypen |
-            Self::Ampersand |
-            Self::Pipe
-        )
-    }
 }
 
-pub fn lex(code: &str) -> Result<Vec<Vec<Token>>, BrainFricError> {
-    code.split('\n').enumerate().map(lex_line).collect()
-}
+pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
 
-fn lex_line((mut line_num, line): (usize, &str)) -> Result<Vec<Token>, BrainFricError> {
-
-    line_num += 1;
-
+    let mut line_num = 1;
     let mut tokens = Vec::new();
-    let mut chars = line.chars().peekable();
+    let mut chars = code.chars().peekable();
 
-    while let Some(char) = chars.peek() {
+    while let Some(&char) = chars.peek() {
+
+        if char == '\n' {
+            
+            tokens.push(Token::Newline);
+            chars.next();
+
+            line_num += 1;
+            continue;
+
+        }
 
         if char.is_whitespace() {
             chars.next();

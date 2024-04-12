@@ -29,7 +29,7 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
         println!();
     }
 
-    let statements = parse::parse(tokenized, 0)?;
+    let statements = parse::parse(&tokenized)?;
 
     if args::arg_show_parse() {
         println!("=== PARSER PASS ===");

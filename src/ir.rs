@@ -87,6 +87,111 @@ use crate::parse::*;
 //     Loop(Identifier, IRBlock, bool)
 // }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataType {
+    Bool,
+    Byte,
+    Short,
+    Sequence(Box<DataType>, usize),
+    String(usize),
+    Stack(Box<DataType>, usize),
+    //Array(Rc<DataType>, usize)
+}
+
+impl DataType {
+
+    pub fn convert_parsed(line_num: usize, parsed_data_type: &ParsedDataType) -> Result<Self, BrainFricError> {
+
+        macro_rules! assert_param_types {
+            ($data_type: ident, $expected: expr) => {
+                {
+                    
+                    let num_params = vec![$expected].len();
+                    
+                    if num_params != parsed_data_type.parameters.len() {
+                        err!(line_num, IRError::InvalidTypeParameters);
+                    }
+                    
+                    for i in 0..num_params {
+                        if $expected[i] != parsed_data_type.parameters[i].get_type_val() {
+                            err!(line_num, IRError::InvalidTypeParameters);
+                        }
+                    }
+                }
+            }
+        }
+
+        const CONSTANT: u32 = 0;
+        const TYPE: u32 = 1;
+        const NONE: [u32; 0] = [];
+
+        match parsed_data_type.head {
+            DataTypeHead::Bool => {
+                assert_param_types!(Bool, NONE);
+                Ok(DataType::Bool)
+            }
+            DataTypeHead::Byte => {
+                assert_param_types!(Byte, NONE);
+                Ok(DataType::Bool)
+            }
+            DataTypeHead::Short => {
+                assert_param_types!(Short, NONE);
+                Ok(DataType::Bool)
+            }
+            
+            DataTypeHead::Sequence => {
+
+                assert_param_types!(Bool, [TYPE, CONSTANT]);
+
+                let (DataTypeParameter::Type(data_type), DataTypeParameter::Constant(length)) = (&parsed_data_type.parameters[0], &parsed_data_type.parameters[1])
+                else {
+                    unreachable!();
+                };
+
+                Ok(DataType::Sequence(Box::new(Self::convert_parsed(line_num, data_type)?), *length))
+
+            }
+            DataTypeHead::String => {
+            
+                assert_param_types!(String, [CONSTANT]);
+
+                let DataTypeParameter::Constant(length) = &parsed_data_type.parameters[0]
+                else {
+                    unreachable!();
+                };
+
+                Ok(DataType::String(*length))
+
+            }
+            DataTypeHead::Stack => {
+
+                assert_param_types!(Bool, [TYPE, CONSTANT]);
+
+                let (DataTypeParameter::Type(data_type), DataTypeParameter::Constant(length)) = (&parsed_data_type.parameters[0], &parsed_data_type.parameters[1])
+                else {
+                    unreachable!();
+                };
+
+                Ok(DataType::Stack(Box::new(Self::convert_parsed(line_num, data_type)?), *length))
+
+            }
+        }
+    }
+
+    pub fn get_size(&self) -> usize {
+
+        match &self {
+            Self::Bool => 1,
+            Self::Byte => 1,
+            Self::Short => 2,
+            Self::Sequence(data_type, len) => len * data_type.get_size(),
+            Self::String(len) => len + 2,
+            Self::Stack(data_type, len) => len * (data_type.get_size() + 1) + 1,
+            //Self::Array(data_type, len) => data_type.get_size() * len
+        }
+    }
+}
+
 pub type Identifier = usize;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -310,8 +415,8 @@ impl IRGenerator {
 
     fn do_copy(&mut self, to: Identifier, from: Identifier, negate: bool) {
         let temp = self.allocate_temporary();
-        self.do_move([temp.clone(), to], from.clone(), false);
-        self.do_move([from], temp.clone(), negate);
+        self.do_move_raw([(temp.clone(), false), (to, negate)], from.clone());
+        self.do_move([from], temp.clone(), false);
         self.do_free(temp);
     }
 
@@ -710,7 +815,10 @@ impl IRGenerator {
             
             match statement.body {
 
-                StatementBody::Declaration(names, data_type) => {
+                StatementBody::Declaration(names, parsed_data_type) => {
+
+                    let data_type = DataType::convert_parsed(statement.line_num, &parsed_data_type)?;
+
                     for name in names {
                         self.allocate_variable(name, data_type.clone());
                     }
@@ -887,6 +995,7 @@ impl IRGenerator {
                     self.do_free(temp);
 
                 }
+                _ => todo!()
             }
         }
 

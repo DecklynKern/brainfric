@@ -1,10 +1,7 @@
-byte x, y, z
-x <- 30
-y <- 999
-writenum x
-write " + "
-writenum y
-write " = "
-z <- x + y
-writenum z
-writeln
+byte x, y
+read x
+switch x
+    case 'a'
+        y <- 10
+    end
+end

@@ -1,5 +1,5 @@
 use crate::lex::Name;
-use crate::parse::DataType;
+use crate::ir::DataType;
 
 pub trait ErrorDesc {
     fn get_description(&self) -> String;
@@ -30,8 +30,10 @@ pub enum ParseError {
     InvalidAccessor,
     ExpectedOpenAngle,
     ExpectedCloseAngle,
+    ExpectedCloseParen,
     ExpectedNumberLiteral,
     ExpectedEnd,
+    ExpectedNewline,
     StringLiteralTooLarge
 }
 
@@ -44,8 +46,10 @@ impl ErrorDesc for ParseError {
             Self::InvalidAccessor => "Invalid accessor",
             Self::ExpectedOpenAngle => "Expected '<'",
             Self::ExpectedCloseAngle => "Expected '>'",
+            Self::ExpectedCloseParen => "Expected ')'",
             Self::ExpectedNumberLiteral => "Expected number literal",
             Self::ExpectedEnd => "Expected end statement to block",
+            Self::ExpectedNewline => "Expected new line",
             Self::StringLiteralTooLarge => "String literal too large for declared sequence"
         })
     }
@@ -57,7 +61,8 @@ pub enum IRError {
     ExpectedSequence,
     ExpectedTypedExpression(DataType),
     OutOfBoundsAccess,
-    ShiftTooLarge
+    ShiftTooLarge,
+    InvalidTypeParameters
 }
 
 impl ErrorDesc for IRError {
@@ -75,7 +80,9 @@ impl ErrorDesc for IRError {
             Self::OutOfBoundsAccess =>
                 "Out of bounds access".to_string(),
             Self::ShiftTooLarge =>
-                "Shift is too large for sequence size".to_string()
+                "Shift is too large for sequence size".to_string(),
+            Self::InvalidTypeParameters =>
+                "Invalid type parameters".to_string()
         })
     }
 }
@@ -102,7 +109,7 @@ impl BrainFricError {
 
 #[macro_export]
 macro_rules! err {
-    ($line_num:expr, $error:expr) => {
+    ($line_num: expr, $error: expr) => {
         return Err(BrainFricError {
             line: $line_num,
             error: Box::new($error)
