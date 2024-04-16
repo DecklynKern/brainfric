@@ -209,6 +209,7 @@ impl<'a> Parser<'a> {
     fn expect_newline(&mut self) -> Result<(), BrainFricError> {
         
         if let Some(Token::Newline) = self.tokens.next() {
+            self.line_num += 1;
             Ok(())
         }
         else {
@@ -221,8 +222,12 @@ impl<'a> Parser<'a> {
         if self.tokens.is_empty() {
             false
         }
+        else if **self.tokens.peek().unwrap() == token {
+            self.tokens.next();
+            true
+        }
         else {
-            *self.tokens.next().unwrap() == token
+            false
         }
     }
 
@@ -380,13 +385,14 @@ impl<'a> Parser<'a> {
 
     fn parse_factor(&mut self) -> Result<Expression, BrainFricError> {
 
-        if self.tokens.is_empty() {
+        let Some(&&ref token) = self.tokens.peek().clone()
+        else {
             err!(self.line_num, ParseError::InvalidExpression);
         };
 
-        let token = self.tokens.next().unwrap();
-
         if token.is_factor_head() {
+
+            self.tokens.next();
 
             match token {
                 Token::OpenParen => {
@@ -482,11 +488,13 @@ impl<'a> Parser<'a> {
             todo!();
         };
 
-        let token = self.tokens.next().unwrap();
+        let token = self.tokens.peek().unwrap();
 
         let body = match token {
 
             Token::If => {
+                
+                self.tokens.next();
 
                 let condition = self.parse_expression()?;
                 self.expect_newline()?;
@@ -497,6 +505,8 @@ impl<'a> Parser<'a> {
 
             }
             Token::While => {
+                
+                self.tokens.next();
 
                 let condition = self.parse_expression()?;
                 self.expect_newline()?;
@@ -508,10 +518,40 @@ impl<'a> Parser<'a> {
             }
             Token::Switch => {
 
-                todo!()
+                self.tokens.next();
 
-                // let (to_match, branches) = StatementBody::try_parse_switch(&mut lines, &mut line_tokens, line_num)?;
-                // StatementBody::Switch(to_match, branches)
+                let expr = self.parse_expression()?;
+
+                let mut arms = Vec::new();
+
+                loop {
+                    
+                    self.expect_newline()?;
+
+                    if !self.try_take_token(Token::Case) {
+                        break;
+                    }
+
+                    let val = match self.tokens.next() {
+                        Some(Token::NumberLiteral(num)) => *num as u8,
+                        Some(Token::CharLiteral(chr)) => *chr as u8,
+                        _ => err!(self.line_num, ParseError::ExpectedNumberLiteral)
+                    };
+
+                    let block = self.parse_block()?;
+
+                    arms.push((val, block));
+
+                }
+
+                self.expect_newline()?;
+
+                if !self.try_take_token(Token::End) {
+                    err!(self.line_num, ParseError::ExpectedEnd);
+                }
+
+                StatementBody::Switch(expr, arms)
+
             }
             _ => {
 
@@ -585,6 +625,7 @@ impl<'a> Parser<'a> {
                         Token::Write => StatementBody::Write(self.parse_expression()?),
                         Token::WriteNum => StatementBody::WriteNum(self.parse_expression()?),
                         Token::WriteLine => StatementBody::Write(Expression::NumberLiteral(10)),
+
                         _ => err!(self.line_num, ParseError::InvalidStatement)
                     }
                 }
@@ -608,11 +649,15 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            if let Some(Token::Newline) = self.tokens.peek() {
+                self.tokens.next();
+                continue;
+            }
+
             statements.push(self.parse_statement()?);
 
             if !self.tokens.is_empty() {
                 self.expect_newline()?;
-                self.line_num += 1;
             }
         }
 

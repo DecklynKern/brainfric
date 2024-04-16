@@ -1,7 +1,11 @@
-byte x, y
-read x
-switch x
-    case 'a'
-        y <- 10
+byte a
+a <- 10
+
+switch a
+    case 10
+        write "hello"
+    end
+    case 12
+        write "deez nuts"
     end
 end

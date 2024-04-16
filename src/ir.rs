@@ -100,82 +100,62 @@ pub enum DataType {
 
 impl DataType {
 
+    fn get_subtype(arg: &DataTypeParameter) -> &ParsedDataType {
+        match arg {
+            DataTypeParameter::Constant(_) => unreachable!(),
+            DataTypeParameter::Type(subtype) => subtype
+        }
+    }
+
+    fn get_constant_val(arg: &DataTypeParameter) -> usize {
+        match arg {
+            DataTypeParameter::Constant(val) => *val,
+            DataTypeParameter::Type(_) => unreachable!()
+        }
+    }
+
     pub fn convert_parsed(line_num: usize, parsed_data_type: &ParsedDataType) -> Result<Self, BrainFricError> {
 
-        macro_rules! assert_param_types {
-            ($data_type: ident, $expected: expr) => {
-                {
-                    
-                    let num_params = vec![$expected].len();
-                    
-                    if num_params != parsed_data_type.parameters.len() {
-                        err!(line_num, IRError::InvalidTypeParameters);
-                    }
-                    
-                    for i in 0..num_params {
-                        if $expected[i] != parsed_data_type.parameters[i].get_type_val() {
-                            err!(line_num, IRError::InvalidTypeParameters);
-                        }
-                    }
-                }
-            }
-        }
+        let params = &parsed_data_type.parameters;
 
         const CONSTANT: u32 = 0;
         const TYPE: u32 = 1;
-        const NONE: [u32; 0] = [];
 
-        match parsed_data_type.head {
-            DataTypeHead::Bool => {
-                assert_param_types!(Bool, NONE);
-                Ok(DataType::Bool)
-            }
-            DataTypeHead::Byte => {
-                assert_param_types!(Byte, NONE);
-                Ok(DataType::Bool)
-            }
-            DataTypeHead::Short => {
-                assert_param_types!(Short, NONE);
-                Ok(DataType::Bool)
-            }
-            
-            DataTypeHead::Sequence => {
+        let expected_types = match parsed_data_type.head {
+            DataTypeHead::Bool => vec![],
+            DataTypeHead::Byte => vec![],
+            DataTypeHead::Short => vec![],
+            DataTypeHead::Sequence => vec![TYPE, CONSTANT],
+            DataTypeHead::String => vec![CONSTANT],
+            DataTypeHead::Stack => vec![TYPE, CONSTANT]
+        };
 
-                assert_param_types!(Bool, [TYPE, CONSTANT]);
+        if expected_types.len() != params.len() {
+            err!(line_num, IRError::InvalidTypeParameters);
+        }
 
-                let (DataTypeParameter::Type(data_type), DataTypeParameter::Constant(length)) = (&parsed_data_type.parameters[0], &parsed_data_type.parameters[1])
-                else {
-                    unreachable!();
-                };
-
-                Ok(DataType::Sequence(Box::new(Self::convert_parsed(line_num, data_type)?), *length))
-
-            }
-            DataTypeHead::String => {
-            
-                assert_param_types!(String, [CONSTANT]);
-
-                let DataTypeParameter::Constant(length) = &parsed_data_type.parameters[0]
-                else {
-                    unreachable!();
-                };
-
-                Ok(DataType::String(*length))
-
-            }
-            DataTypeHead::Stack => {
-
-                assert_param_types!(Bool, [TYPE, CONSTANT]);
-
-                let (DataTypeParameter::Type(data_type), DataTypeParameter::Constant(length)) = (&parsed_data_type.parameters[0], &parsed_data_type.parameters[1])
-                else {
-                    unreachable!();
-                };
-
-                Ok(DataType::Stack(Box::new(Self::convert_parsed(line_num, data_type)?), *length))
-
+        for idx in 0..expected_types.len() {
+            if expected_types[idx] != params[idx].get_type_val() {
+                err!(line_num, IRError::InvalidTypeParameters);
             }
         }
+
+        Ok(match parsed_data_type.head {
+            DataTypeHead::Bool => DataType::Bool,
+            DataTypeHead::Byte => DataType::Byte,
+            DataTypeHead::Short => DataType::Short,
+            DataTypeHead::Sequence => DataType::Sequence(
+                Box::new(Self::convert_parsed(line_num, Self::get_subtype(&params[0]))?),
+                Self::get_constant_val(&params[1])
+            ),
+            DataTypeHead::String => DataType::String(
+                Self::get_constant_val(&params[1])
+            ),
+            DataTypeHead::Stack => DataType::Stack(
+                Box::new(Self::convert_parsed(line_num, Self::get_subtype(&params[0]))?),
+                Self::get_constant_val(&params[1])
+            )
+        })
     }
 
     pub fn get_size(&self) -> usize {
@@ -212,6 +192,28 @@ impl Allocation {
     pub fn get_identifier(&self) -> Identifier {
         match self {
             Self::Variable(id) | Self::Temporary(id) => *id
+        }
+    }
+}
+
+impl Expression {
+    fn contains_name(&self, name: &str) -> bool {
+        match self {
+            Self::Access(access) => access.name.as_ref() == name,
+            Self::Equals(expr1, expr2) |
+            Self::NotEquals(expr1, expr2) |
+            Self::LessThan(expr1, expr2) | 
+            Self::GreaterThan(expr1, expr2) |
+            Self::And(expr1, expr2) |
+            Self::Or(expr1, expr2) | 
+            Self::Add(expr1, expr2) |
+            Self::Subtract(expr1, expr2) |
+            Self::Multiply(expr1, expr2) |
+            Self::Divide(expr1, expr2) =>
+                expr1.contains_name(name) || expr2.contains_name(name),
+            Self::Not(expr) | Self::AsBool(expr) | Self::AsNum(expr) =>
+                expr.contains_name(name),
+            _ => false
         }
     }
 }
@@ -825,6 +827,7 @@ impl IRGenerator {
                 }
                 StatementBody::SetTo(accessor, expression) => {
 
+                    let name = accessor.name.clone();
                     let (mem, data_type) = self.resolve_accessor(accessor)?;
 
                     if let (
@@ -853,9 +856,24 @@ impl IRGenerator {
 
                     }
 
-                    self.do_clear(mem.clone());
-                    self.evaluate_expression_into(expression, &data_type, mem)?;
+                    if expression.contains_name(&name) {
 
+                        match data_type {
+                            DataType::Bool | DataType::Byte => {
+                                let temp = self.allocate_temporary();
+                                self.evaluate_expression_into(expression, &data_type, temp)?;
+                                self.do_clear(mem.clone());
+                                self.do_move([mem], temp, false);
+                                self.do_free(temp);
+                            }
+                            DataType::Short => todo!(),
+                            _ => todo!()
+                        }
+                    }
+                    else {
+                        self.do_clear(mem.clone());
+                        self.evaluate_expression_into(expression, &data_type, mem)?;
+                    }
                 }
                 StatementBody::Inc(accessor) => {
 
