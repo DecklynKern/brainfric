@@ -68,7 +68,7 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
     //     }
     // }
 
-    let mut bf_code = lower::lower(ir.0);
+    let mut bf_code = lower::lower(ir);
 
     if args::arg_show_lowered() {
         println!("=== LOWERING PASS ===");

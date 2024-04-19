@@ -216,7 +216,7 @@ use crate::ir::*;
 //         return value;
 //     }
 
-//     known_values.insert(mem.clone(), Some(0));
+//     known_values.insert(mem, Some(0));
 //     Some(0)
 
 // }
@@ -256,7 +256,7 @@ use crate::ir::*;
 //             }
 
 //             if let Some(num2) = get_known_value(known_values, mem){
-//                 known_values.insert(mem.clone(), Some(num.overflowing_add(num2).0));
+//                 known_values.insert(mem, Some(num.overflowing_add(num2).0));
 //             }
 //         }
 //         IRStatement::MoveCell(to, from) => {
@@ -275,7 +275,7 @@ use crate::ir::*;
 //                     OptimizeActionStage1::ReplaceStatement(
 //                         to.iter()
 //                             .map(|(id, negate)| 
-//                                 IRStatement::AddConst(id.clone(), if *negate {negated} else {num}))
+//                                 IRStatement::AddConst(id, if *negate {negated} else {num}))
 //                             .chain([IRStatement::AddConst(from.clone(), negated)])
 //                             .collect()
 //                     )
@@ -283,7 +283,7 @@ use crate::ir::*;
 //             }
 
 //             for (mem, _) in to.iter() {
-//                 known_values.insert(mem.clone(), None);
+//                 known_values.insert(mem, None);
 //             }
 
 //             known_values.insert(from.clone(), Some(0));
@@ -309,7 +309,7 @@ use crate::ir::*;
 //         }
 //         IRStatement::WriteByte(_) | IRStatement::WriteByteSequence(_, _) | IRStatement::WriteString(_) => {},
 //         IRStatement::ReadByte(mem) => {
-//             known_values.insert(mem.clone(), None);
+//             known_values.insert(mem, None);
 //         }
 //         IRStatement::Loop(mem, block, run_once) => {
 
@@ -390,7 +390,7 @@ use crate::ir::*;
 //                     known_values.insert(access, None);
 //                 }
 
-//                 known_values.insert(mem.clone(), Some(0));
+//                 known_values.insert(mem, Some(0));
                     
 //             }
 //             OptimizeActionStage1::CombineAdd(num, idx) => {
@@ -406,7 +406,7 @@ use crate::ir::*;
 
 //                         to.iter()
 //                             .rev()
-//                             .map(|(mem, negate)| IRStatement::AddConst(mem.clone(), if *negate {negated} else {num}))
+//                             .map(|(mem, negate)| IRStatement::AddConst(mem, if *negate {negated} else {num}))
 //                             .collect()
 //                     }
 //                     _ => panic!("combine add fail")

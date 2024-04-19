@@ -1,4 +1,5 @@
 const PATTERNS: [&str; 4] = ["<>", "><", "+-", "-+"];
+const REPLACINGS: [(&str, &str); 1] = [("][-]", "]")];
 
 pub fn clean(code: &mut String) {
 

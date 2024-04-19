@@ -34,7 +34,8 @@ pub enum ParseError {
     ExpectedNumberLiteral,
     ExpectedEnd,
     ExpectedNewline,
-    StringLiteralTooLarge
+    StringLiteralTooLarge,
+    MultipleDefaultArms
 }
 
 impl ErrorDesc for ParseError {
@@ -50,7 +51,8 @@ impl ErrorDesc for ParseError {
             Self::ExpectedNumberLiteral => "Expected number literal",
             Self::ExpectedEnd => "Expected end statement to block",
             Self::ExpectedNewline => "Expected new line",
-            Self::StringLiteralTooLarge => "String literal too large for declared sequence"
+            Self::StringLiteralTooLarge => "String literal too large for declared sequence",
+            Self::MultipleDefaultArms => "Multiple default arms"
         })
     }
 }

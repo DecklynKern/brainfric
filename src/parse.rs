@@ -82,6 +82,8 @@ pub enum Expression {
     NotEquals(Box<Expression>, Box<Expression>),
     LessThan(Box<Expression>, Box<Expression>),
     GreaterThan(Box<Expression>, Box<Expression>),
+    LessThanEqual(Box<Expression>, Box<Expression>),
+    GreaterThanEqual(Box<Expression>, Box<Expression>),
 
     Not(Box<Expression>),
     And(Box<Expression>, Box<Expression>),
@@ -108,82 +110,11 @@ pub enum StatementBody {
     RightShift(Accessor, u32),
     Write(Expression),
     WriteNum(Expression),
+    WriteLine,
     Read(Accessor),
     While(Expression, Block),
     If(Expression, Block),
-    Switch(Expression, Vec<(u8, Block)>)
-}
-
-impl StatementBody {
-
-    // fn get_lines_to_matching_end(lines: &mut Vec<Vec<Token>>, line_num: usize) -> Result<Vec<Vec<Token>>, BrainFricError> {
-
-    //     let mut block_lines = Vec::new();
-    //     let mut block_depth = 1;
-
-    //     while block_depth > 0 {
-
-    //         let Some(line) = lines.pop()
-    //         else {
-    //             err!(line_num, ParseError::ExpectedEnd);
-    //         };
-
-    //         match line[0] {
-    //             Token::If | Token::While | Token::Switch | Token::Case => block_depth += 1,
-    //             Token::End => block_depth -= 1,
-    //             _ => {}
-    //         }
-
-    //         block_lines.push(line);
-            
-    //     }
-
-    //     block_lines.pop();
-
-    //     Ok(block_lines)
-
-    // }
-
-    // fn try_parse_control_flow(lines: &mut Vec<Vec<Token>>, condition_tokens: &mut Peekable<Iter<Token>>, line_num: usize) -> Result<(Expression, Vec<Statement>), BrainFricError> {
-
-    //     condition_tokens.next();
-
-    //     let (Some(expression), true) = (Expression::try_parse(condition_tokens), condition_tokens.is_empty())
-    //     else {
-    //         err!(line_num, ParseError::InvalidExpression);
-    //     };
-
-    //     let loop_lines = Self::get_lines_to_matching_end(lines, line_num)?;
-
-    //     Ok((expression, parse(loop_lines, line_num)?))
-        
-    // }
-
-    // fn try_parse_switch(lines: &mut Vec<Vec<Token>>, to_match_tokens: &mut Peekable<Iter<Token>>, line_num: usize) -> Result<(Expression, Vec<(u8, Vec<Statement>)>), BrainFricError> {
-        
-    //     to_match_tokens.next();
-
-    //     let (Some(expression), true) = (Expression::try_parse(to_match_tokens), to_match_tokens.is_empty())
-    //     else {
-    //         err!(line_num, ParseError::InvalidExpression);
-    //     };
-
-    //     let mut switch_lines = Self::get_lines_to_matching_end(lines, line_num)?;
-    //     let mut cases = Vec::new();
-
-    //     while !switch_lines.is_empty() {
-    //         cases.push(Self::try_parse_case(&mut switch_lines, line_num)?);
-    //     }
-
-    //     Ok((expression, cases))
-    
-    // }
-
-    // fn try_parse_case(lines: &mut Vec<Vec<Token>>, line_num: usize) -> Result<(u8, Vec<Statement>), BrainFricError> {
-
-    //     todo!()
-
-    // }
+    Switch(Expression, Vec<(u8, Block)>, Option<Block>)
 }
 
 pub struct Statement {
@@ -207,9 +138,27 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
 
     fn expect_newline(&mut self) -> Result<(), BrainFricError> {
-        
-        if let Some(Token::Newline) = self.tokens.next() {
-            self.line_num += 1;
+
+        let mut found_newline = false;
+
+        loop {
+            match self.tokens.peek() {
+                Some(Token::Comment) => {
+                    self.tokens.next();
+                }
+                Some(Token::Newline) => {
+
+                    self.tokens.next();
+
+                    self.line_num += 1;
+                    found_newline = true;
+
+                }
+                _ => break
+            }
+        }
+
+        if found_newline {
             Ok(())
         }
         else {
@@ -238,13 +187,11 @@ impl<'a> Parser<'a> {
         };
 
         if let Token::NumberLiteral(num) = token {
+            self.tokens.next();
             Some(DataTypeParameter::Constant(*num as usize))
         }
-        else if let Some(data_type) = self.try_parse_data_type() {
-            Some(DataTypeParameter::Type(data_type))
-        }
         else {
-            None
+            self.try_parse_data_type().map(DataTypeParameter::Type)
         }
     }
 
@@ -274,7 +221,9 @@ impl<'a> Parser<'a> {
 
         if self.try_take_token(Token::OpenAngle) {
 
-            while !self.tokens.is_empty() {
+            let mut first_param = true;
+
+            loop {
 
                 if self.try_take_token(Token::CloseAngle) {
                     return Some(data_type);
@@ -285,13 +234,13 @@ impl<'a> Parser<'a> {
                     None => return None
                 }
 
-                if !self.try_take_token(Token::Comma) {
+                if !first_param && !self.try_take_token(Token::Comma) {
                     return None;
                 }
+
+                first_param = false;
+
             }
-
-            None
-
         }
         else {
             Some(data_type)
@@ -371,6 +320,8 @@ impl<'a> Parser<'a> {
             Token::NotEqual => Expression::NotEquals,
             Token::OpenAngle => Expression::LessThan,
             Token::CloseAngle => Expression::GreaterThan,
+            Token::LessThanEqual => Expression::LessThanEqual,
+            Token::GreaterThanEqual => Expression::GreaterThanEqual,
             Token::Plus => Expression::Add,
             Token::Hypen => Expression::Subtract,
             Token::Ampersand => Expression::And,
@@ -385,7 +336,7 @@ impl<'a> Parser<'a> {
 
     fn parse_factor(&mut self) -> Result<Expression, BrainFricError> {
 
-        let Some(&&ref token) = self.tokens.peek().clone()
+        let Some(& token) = self.tokens.peek()
         else {
             err!(self.line_num, ParseError::InvalidExpression);
         };
@@ -523,10 +474,24 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expression()?;
 
                 let mut arms = Vec::new();
+                let mut default = None;
 
                 loop {
                     
                     self.expect_newline()?;
+
+                    if self.try_take_token(Token::Default) {
+
+                        if default.is_some() {
+                            err!(self.line_num, ParseError::MultipleDefaultArms);
+                        }
+
+                        self.expect_newline()?;
+                        default = Some(self.parse_block()?);
+
+                        continue;
+
+                    }
 
                     if !self.try_take_token(Token::Case) {
                         break;
@@ -538,21 +503,32 @@ impl<'a> Parser<'a> {
                         _ => err!(self.line_num, ParseError::ExpectedNumberLiteral)
                     };
 
+                    self.expect_newline()?;
+
                     let block = self.parse_block()?;
 
                     arms.push((val, block));
 
                 }
 
-                self.expect_newline()?;
-
                 if !self.try_take_token(Token::End) {
                     err!(self.line_num, ParseError::ExpectedEnd);
                 }
 
-                StatementBody::Switch(expr, arms)
+                StatementBody::Switch(expr, arms, default)
 
             }
+
+            Token::Identifier(_) => {
+
+                let accessor = self.parse_accessor()?;
+                self.try_take_token(Token::SetTo);
+                let expression = self.parse_expression()?;
+
+                StatementBody::SetTo(accessor, expression)
+
+            }
+
             _ => {
 
                 if let Some(data_type) = self.try_parse_data_type() {
@@ -576,15 +552,6 @@ impl<'a> Parser<'a> {
                     }
         
                     StatementBody::Declaration(names, data_type)
-
-                }
-                else if let Some(Token::Identifier(_)) = self.tokens.peek() {
-
-                    let accessor = self.parse_accessor()?;
-                    self.try_take_token(Token::SetTo);
-                    let expression = self.parse_expression()?;
-
-                    StatementBody::SetTo(accessor, expression)
 
                 }
                 else {
@@ -624,7 +591,7 @@ impl<'a> Parser<'a> {
                         }
                         Token::Write => StatementBody::Write(self.parse_expression()?),
                         Token::WriteNum => StatementBody::WriteNum(self.parse_expression()?),
-                        Token::WriteLine => StatementBody::Write(Expression::NumberLiteral(10)),
+                        Token::WriteLine => StatementBody::WriteLine,
 
                         _ => err!(self.line_num, ParseError::InvalidStatement)
                     }
@@ -647,11 +614,6 @@ impl<'a> Parser<'a> {
             if *token == Token::End {
                 self.tokens.next();
                 break;
-            }
-
-            if let Some(Token::Newline) = self.tokens.peek() {
-                self.tokens.next();
-                continue;
             }
 
             statements.push(self.parse_statement()?);

@@ -1,11 +1,18 @@
-byte a
-a <- 10
+byte x
 
-switch a
-    case 10
-        write "hello"
-    end
-    case 12
-        write "deez nuts"
+x <- 1
+
+while x != 0
+
+    switch x
+        case 1
+            x <- 3
+        end
+        case 3
+            x <- 2
+        end
+        default
+            x <- 0
+        end
     end
 end

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ir::*;
 
-pub fn lower(ir: Vec<IRStatement>) -> String {
+pub fn lower(ir: IRBlock) -> String {
     
     let mut lowerer = Lowerer {
         bf_code: String::new(),
@@ -48,9 +48,9 @@ impl Lowerer {
         );
     }
 
-    fn jump_to(&mut self, mem: Identifier) {
+    fn jump_to(&mut self, id: Identifier) {
         
-        let id_address = self.identifier_table[&mem];
+        let id_address = self.identifier_table[&id];
         self.jump_diff(self.data_head, id_address);
         self.data_head = id_address;
 
@@ -75,9 +75,11 @@ impl Lowerer {
         }
     }
 
-    fn lower_statements(&mut self, ir: Vec<IRStatement>) {
+    fn lower_statements(&mut self, ir: IRBlock) {
+
+        let original_head = self.data_head;
         
-        for ir_statement in ir {
+        for ir_statement in ir.0 {
             
             match ir_statement {
 
@@ -93,9 +95,9 @@ impl Lowerer {
                         self.stack_pointer -= 1;
                     }
                 }
-                IRStatement::AddConst(mem, num) => {
+                IRStatement::AddConst(id, num) => {
                     
-                    self.jump_to(mem);
+                    self.jump_to(id);
 
                     self.bf_code.push_str(&
                         if num > 127 {
@@ -108,11 +110,11 @@ impl Lowerer {
                 }
                 IRStatement::MoveCell(to, from) => {
 
-                    self.jump_to(from.clone());
+                    self.jump_to(from);
                     self.bf_code.push_str("[-");
 
                     for (reg, negate) in to.iter() {
-                        self.jump_to(reg.clone());
+                        self.jump_to(*reg);
                         self.bf_code.push(if *negate {'-'} else {'+'});
                     }
 
@@ -120,24 +122,24 @@ impl Lowerer {
                     self.bf_code.push(']');
 
                 }
-                IRStatement::ReadByte(mem) => {
-                    self.jump_to(mem);
+                IRStatement::ReadByte(id) => {
+                    self.jump_to(id);
                     self.bf_code.push(',');
                 }
-                IRStatement::WriteByte(mem) => {
-                    self.jump_to(mem);
+                IRStatement::WriteByte(id) => {
+                    self.jump_to(id);
                     self.bf_code.push('.');
                 }
-                IRStatement::WriteByteSequence(mem, len) => {
+                IRStatement::WriteByteSequence(id, len) => {
 
-                    self.jump_to(mem);
+                    self.jump_to(id);
                     
                     self.bf_code.push_str(&".>".repeat(len));
                     self.bf_code.push_str(&"<".repeat(len));
 
                 }
-                IRStatement::WriteString(mem) => {
-                    self.jump_to(mem);
+                IRStatement::WriteString(id) => {
+                    self.jump_to(id);
                     self.bf_code.push_str(">[.>]<[<]");
                 }
                 IRStatement::WriteByteAsNumber { id, temp_block } => {
@@ -151,14 +153,56 @@ impl Lowerer {
                         [id, temp_block]
                     );
                 }
-                IRStatement::Loop(mem, block, _) => {
-                    self.jump_to(mem.clone());
+                IRStatement::Loop(id, block, _) => {
+
+                    self.jump_to(id);
+
                     self.bf_code.push('[');
-                    self.lower_statements(block.0);
-                    self.jump_to(mem);
+                    self.lower_statements(block);
+                    self.jump_to(id);
                     self.bf_code.push(']');
+
+                }
+                IRStatement::Switch {temp_block, arms, default} => {
+                    
+                    self.jump_to(temp_block);
+                    self.bf_code.push_str("+>");
+
+                    let mut prev_case = 0;
+
+                    for (case, _) in arms.iter() {
+
+                        self.bf_code.push_str(&"-".repeat((case - prev_case) as usize));
+                        prev_case = *case;
+                        
+                        self.bf_code.push('[');
+
+                    }
+
+                    self.bf_code.push_str("<-");
+
+                    if let Some(statements) = default {
+                        self.lower_statements(statements);
+                    }
+
+                    self.bf_code.push_str(">[-]");
+
+                    for (_, arm) in arms.into_iter().rev() {
+
+                        self.bf_code.push_str("]<[-");
+                        self.lower_statements(arm);
+                        self.bf_code.push_str("]>");
+
+                    }
+
+                    self.bf_code.push('<');
+
                 }
             }
         }
+
+        self.jump_diff(self.data_head, original_head);
+        self.data_head = original_head;
+
     }
 }

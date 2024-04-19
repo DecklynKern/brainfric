@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::mem::{swap, take, replace};
-use std::num::NonZeroUsize;
+use std::collections::HashMap;
+use std::mem::take;
 
 use crate::args::arg_allow_delete_variables;
 use crate::error::*;
@@ -149,7 +148,7 @@ impl DataType {
                 Self::get_constant_val(&params[1])
             ),
             DataTypeHead::String => DataType::String(
-                Self::get_constant_val(&params[1])
+                Self::get_constant_val(&params[0])
             ),
             DataTypeHead::Stack => DataType::Stack(
                 Box::new(Self::convert_parsed(line_num, Self::get_subtype(&params[0]))?),
@@ -247,6 +246,41 @@ impl std::fmt::Debug for IRBlock {
     }
 }
 
+macro_rules! with_temp {
+
+    ($self: ident, $temp: ident, $block: block) => {
+        {
+            let $temp = $self.allocate_temporary();
+            $block
+            $self.do_free($temp);
+        }
+    };
+
+    ($self: ident, $temp: ident, $($other_temp: ident),*, $block: block) => {
+        {
+            let $temp = $self.allocate_temporary();
+            with_temp!($self, $($other_temp),*, $block);
+            $self.do_free($temp);
+        }
+    }
+}
+
+macro_rules! do_while {
+    ($self: ident, $id: ident, $block: block) => {
+        $self.do_begin_loop();
+        $block;
+        $self.do_end_loop($id, false);
+    }
+}
+
+macro_rules! do_if {
+    ($self: ident, $id: ident, $block: block) => {
+        $self.do_begin_loop();
+        $block;
+        $self.do_end_loop($id, true);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum IRStatement {
     Alloc(Allocation),
@@ -258,7 +292,8 @@ pub enum IRStatement {
     WriteString(Identifier),
     WriteByteAsNumber {id: Identifier, temp_block: Identifier}, // temp_block = 6 cells
     ReadByte(Identifier),
-    Loop(Identifier, IRBlock, bool)
+    Loop(Identifier, IRBlock, bool),
+    Switch {temp_block: Identifier, arms: Vec<(u8, IRBlock)>, default: Option<IRBlock>}, // temp_block = 2 cells
 }
 
 pub fn generate_ir(statements: Vec<Statement>) -> Result<IRBlock, BrainFricError> {
@@ -296,10 +331,6 @@ impl IRGenerator {
         }
     }
 
-    fn do_free_access(&mut self, mem: Identifier) {
-        self.do_free(mem);
-    }
-
     fn try_free_access(&mut self, mem: Identifier, is_temp: bool) {
         if is_temp {
             let id = mem;
@@ -326,7 +357,7 @@ impl IRGenerator {
 
         let id = self.next_identifier;
 
-        for i in 0..size {
+        for _ in 0..size {
             self.ir.0.push(IRStatement::Alloc(Allocation::Temporary(self.next_identifier)));
             self.next_identifier += 1;
         }
@@ -402,7 +433,7 @@ impl IRGenerator {
     fn do_move_raw<const N: usize>(&mut self, to: [(Identifier, bool); N], from: Identifier) {
         self.ir.0.push(IRStatement::MoveCell(
             to.iter()
-                .map(|(mem, negate)| (mem.clone(), *negate))
+                .map(|(mem, negate)| (*mem, *negate))
                 .collect(),
             from)
         )
@@ -416,10 +447,10 @@ impl IRGenerator {
     }
 
     fn do_copy(&mut self, to: Identifier, from: Identifier, negate: bool) {
-        let temp = self.allocate_temporary();
-        self.do_move_raw([(temp.clone(), false), (to, negate)], from.clone());
-        self.do_move([from], temp.clone(), false);
-        self.do_free(temp);
+        with_temp!(self, temp, {
+            self.do_move_raw([(temp, false), (to, negate)], from);
+            self.do_move([from], temp, false);
+        });
     }
 
     fn do_clear(&mut self, id: Identifier) {
@@ -460,18 +491,18 @@ impl IRGenerator {
 
     fn do_copy_short(&mut self, to_low: Identifier, from_low: Identifier, negate: bool) {
 
-        let temp = self.allocate_temporary();
-        let to_high = to_low + 1;
-        let from_high = from_low + 1;
+        with_temp!(self, temp, {
 
-        self.do_move([temp.clone(), to_low], from_low.clone(), false);
-        self.do_move([from_low], temp.clone(), negate);
+            let to_high = to_low + 1;
+            let from_high = from_low + 1;
+    
+            self.do_move([temp, to_low], from_low, false);
+            self.do_move([from_low], temp, negate);
+    
+            self.do_move([temp, to_high], from_high, false);
+            self.do_move([from_high], temp, negate);
 
-        self.do_move([temp.clone(), to_high], from_high.clone(), false);
-        self.do_move([from_high], temp.clone(), negate);
-
-        self.do_free(temp);
-
+        });
     }
 
     fn do_add_const_short(&mut self, id: Identifier, val: u16) {
@@ -488,13 +519,22 @@ impl IRGenerator {
         self.ir.0.push(IRStatement::MoveCell(Box::default(), id + 1));
     }
 
-    fn do_begin_loop(&mut self) {
+    fn push_ir_to_stack(&mut self) {
         self.loop_stack.push(take(&mut self.ir));
     }
 
+    fn pop_ir_from_stack(&mut self) {
+        self.ir = self.loop_stack.pop().unwrap();
+    }
+
+    fn do_begin_loop(&mut self) {
+        self.push_ir_to_stack();
+    }
+
     fn do_end_loop(&mut self, mem: Identifier, is_if: bool) {
-        swap(&mut self.ir, self.loop_stack.last_mut().unwrap());
-        self.ir.0.push(IRStatement::Loop(mem, self.loop_stack.pop().unwrap(), is_if));
+        let ir = take(&mut self.ir);
+        self.pop_ir_from_stack();
+        self.ir.0.push(IRStatement::Loop(mem, ir, is_if));
     }
 
     fn evaluate_bool_expression_into(&mut self, expression: Expression, into: Identifier) -> Result<(), BrainFricError> {
@@ -512,106 +552,189 @@ impl IRGenerator {
             Expression::AsBool(expr) => {
 
                 let (mem, is_temp) = self.evaluate_expression(*expr, &DataType::Byte)?;
-                let temp = self.allocate_temporary();
 
-                self.do_move([into.clone(), temp.clone()], mem.clone(), false);
-                self.do_move([mem.clone()], into.clone(), false);
+                with_temp!(self, temp, {
 
-                self.do_begin_loop();
-                self.do_add_const(into, 1);
-                self.do_clear(temp.clone());
-                self.do_end_loop(temp.clone(), true);
-                
-                self.do_free(temp);
+                    self.do_move([into, temp], mem, false);
+                    self.do_move([mem], into, false);
+
+                    do_if!(self, temp, {
+                        self.do_add_const(into, 1);
+                        self.do_clear(temp);
+                    });
+                });
+
                 self.try_free_access(mem, is_temp);
 
             }
             Expression::Not(expr) => {
 
-                let temp = self.allocate_temporary();
-                self.evaluate_bool_expression_into(*expr, temp.clone())?;
+                with_temp!(self, temp, {
 
-                self.do_add_const(into.clone(), 1);
+                    self.evaluate_bool_expression_into(*expr, temp)?;
 
-                self.do_begin_loop();
-                self.do_sub_const(temp.clone(), 1);
-                self.do_sub_const(into, 1);
-                self.do_end_loop(temp.clone(), true);
+                    self.do_add_const(into, 1);
 
-                self.do_free(temp);
-
+                    do_if!(self, temp, {
+                        self.do_sub_const(temp, 1);
+                        self.do_sub_const(into, 1);
+                    });
+                });
             }
             Expression::And(expr1, expr2) => {
 
-                let (mem1, is_temp1) = self.evaluate_expression(*expr1, &DataType::Bool)?;
-                let (mem2, is_temp2) = self.evaluate_expression(*expr2, &DataType::Bool)?;
+                with_temp!(self, temp1, temp2, temp3, {
 
-                let temp = self.allocate_temporary();
+                    self.evaluate_bool_expression_into(*expr1, temp1)?;
+                    self.evaluate_bool_expression_into(*expr2, temp2)?;
 
-                self.do_copy(temp.clone(), mem2.clone(), false);
+                    self.do_move([temp3], temp2, false);
 
-                self.do_begin_loop();
-                self.do_copy(into, mem1.clone(), false);
-                self.do_sub_const(temp.clone(), 1);
-                self.do_end_loop(temp.clone(), true);
-
-                self.do_free(temp);
-                self.try_free_access(mem2, is_temp2);
-                self.try_free_access(mem1, is_temp1);
-
+                    do_if!(self, temp3, {
+                        self.do_move([into], temp1, false);
+                        self.do_sub_const(temp3, 1);
+                    });
+                });
             }
             Expression::Or(expr1, expr2) => {
 
-                let (mem1, is_temp1) = self.evaluate_expression(*expr1, &DataType::Bool)?;
-                let (mem2, is_temp2) = self.evaluate_expression(*expr2, &DataType::Bool)?;
+                with_temp!(self, temp1, temp2, temp3, {
 
-                let temp = self.allocate_temporary();
-                self.do_copy(temp.clone(), mem1.clone(), false);
-                self.do_copy(temp.clone(), mem2.clone(), false);
+                    self.evaluate_bool_expression_into(*expr1, temp1)?;
+                    self.evaluate_bool_expression_into(*expr2, temp2)?;
+    
+                    self.do_move([temp3], temp1, false);
+                    self.do_move([temp3], temp2, false);
 
-                self.do_begin_loop();
-                self.do_add_const(into, 1);
-                self.do_clear(temp.clone());
-                self.do_end_loop(temp.clone(), true);
-
-                self.do_free(temp);
-                self.try_free_access(mem2, is_temp2);
-                self.try_free_access(mem1, is_temp1);
-
+                    do_if!(self, temp3, {
+                        self.do_add_const(into, 1);
+                        self.do_clear(temp3);
+                    });
+                });
             }
             Expression::Equals(expr1, expr2) => {
 
-                self.do_add_const(into.clone(), 1);
+                self.do_add_const(into, 1);
 
-                let temp1 = self.allocate_temporary();
-                self.evaluate_expression_into(*expr1, &DataType::Byte, temp1.clone())?;
+                with_temp!(self, temp, {
 
-                let temp2 = self.allocate_temporary();
-                self.evaluate_expression_into(*expr2, &DataType::Byte, temp2.clone())?;
+                    self.evaluate_byte_expression_into(*expr1, temp, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp, true)?;
 
-                self.do_move([temp2.clone()], temp1, true);
-
-                self.do_begin_loop();
-                self.do_sub_const(into, 1);
-                self.do_clear(temp2.clone());
-                self.do_end_loop(temp2, true);
-
+                    do_if!(self, temp, {
+                        self.do_sub_const(into, 1);
+                        self.do_clear(temp);
+                    });
+                });
             }
             Expression::NotEquals(expr1, expr2) => {
 
-                let temp1 = self.allocate_temporary();
-                self.evaluate_expression_into(*expr1, &DataType::Byte, temp1.clone())?;
+                with_temp!(self, temp, {
 
-                let temp2 = self.allocate_temporary();
-                self.evaluate_expression_into(*expr2, &DataType::Byte, temp2.clone())?;
+                    self.evaluate_byte_expression_into(*expr1, temp, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp, true)?;
 
-                self.do_move([temp2.clone()], temp1, true);
+                    do_if!(self, temp, {
+                        self.do_add_const(into, 1);
+                        self.do_clear(temp);
+                    });
+                });
+            }
+            Expression::GreaterThan(expr1, expr2) => {
 
-                self.do_begin_loop();
-                self.do_add_const(into, 1);
-                self.do_clear(temp2.clone());
-                self.do_end_loop(temp2, true);
+                with_temp!(self, temp1, temp2, temp3, {
 
+                    self.evaluate_byte_expression_into(*expr1, temp1, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp2, false)?;
+    
+                    self.do_sub_const(temp1, 1);
+
+                    do_while!(self, temp1, {
+    
+                        self.do_add_const(into, 1);
+                        self.do_sub_const(temp1, 1);
+                        self.do_sub_const(temp2, 1);
+
+                        do_if!(self, temp2, {
+                            self.do_sub_const(into, 1);
+                            self.do_move([temp3], temp2, false);
+                        });
+                        
+                        self.do_move([temp2], temp3, false);
+
+                    });
+                });
+            }
+            Expression::LessThan(expr1, expr2) => {
+
+                with_temp!(self, temp1, temp2, temp3, {
+
+                    self.evaluate_byte_expression_into(*expr1, temp1, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp2, false)?;
+
+                    self.do_sub_const(temp2, 1);
+
+                    do_while!(self, temp2, {
+
+                        self.do_add_const(into, 1);
+                        self.do_sub_const(temp1, 1);
+                        self.do_sub_const(temp2, 1);
+
+                        do_if!(self, temp1, {
+                            self.do_sub_const(into, 1);
+                            self.do_move([temp3], temp1, false);
+                        });
+                        
+                        self.do_move([temp1], temp3, false);
+
+                    });
+                });
+            }
+            Expression::GreaterThanEqual(expr1, expr2) => {
+
+                with_temp!(self, temp1, temp2, temp3, {
+
+                    self.evaluate_byte_expression_into(*expr1, temp1, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp2, false)?;
+
+                    do_while!(self, temp1, {
+
+                        self.do_add_const(into, 1);
+                        self.do_sub_const(temp1, 1);
+                        self.do_sub_const(temp2, 1);
+
+                        do_if!(self, temp2, {
+                            self.do_sub_const(into, 1);
+                            self.do_move([temp3], temp2, false);
+                        });
+                        
+                        self.do_move([temp2], temp3, false);
+
+                    });
+                });
+            }
+            Expression::LessThanEqual(expr1, expr2) => {
+
+                with_temp!(self, temp1, temp2, temp3, {
+
+                    self.evaluate_byte_expression_into(*expr1, temp1, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp2, false)?;
+
+                    do_while!(self, temp2, {
+
+                        self.do_add_const(into, 1);
+                        self.do_sub_const(temp1, 1);
+                        self.do_sub_const(temp2, 1);
+
+                        do_if!(self, temp1, {
+                            self.do_sub_const(into, 1);
+                            self.do_move([temp3], temp1, false);
+                        });
+                        
+                        self.do_move([temp1], temp3, false);
+
+                    });
+                });
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Bool))
         };
@@ -641,36 +764,29 @@ impl IRGenerator {
                 }
             }
             Expression::Add(expr1, expr2) => {
-                self.evaluate_byte_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_byte_expression_into(*expr1, into, negate)?;
                 self.evaluate_byte_expression_into(*expr2, into, negate)?;
             }
             Expression::Subtract(expr1, expr2) => {
-                self.evaluate_byte_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_byte_expression_into(*expr1, into, negate)?;
                 self.evaluate_byte_expression_into(*expr2, into, !negate)?;
             }
             Expression::Multiply(expr1, expr2) => {
 
-                let temp1 = self.allocate_temporary();
-                self.evaluate_byte_expression_into(*expr1, temp1.clone(), false)?;
+                with_temp!(self, temp1, temp2, temp3, {
 
-                let temp2 = self.allocate_temporary();
-                self.evaluate_byte_expression_into(*expr2, temp2.clone(), false)?;
+                    self.evaluate_byte_expression_into(*expr1, temp1, false)?;
+                    self.evaluate_byte_expression_into(*expr2, temp2, false)?;
 
-                let temp3 = self.allocate_temporary();
+                    do_while!(self, temp2, {
 
-                self.do_begin_loop();
+                        self.do_move_raw([(into, negate), (temp3, false)], temp1);
+                        self.do_move([temp1], temp3, false);
+    
+                        self.do_sub_const(temp2, 1);
 
-                self.do_move_raw([(into, negate), (temp3.clone(), false)], temp1.clone());
-
-                self.do_move([temp1.clone()], temp3.clone(), false);
-
-                self.do_sub_const(temp2.clone(), 1);
-                self.do_end_loop(temp2.clone(), false);
-
-                self.do_free_access(temp3);
-                self.do_free_access(temp2);
-                self.do_free_access(temp1);
-
+                    });
+                });
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Byte))
         };
@@ -698,36 +814,36 @@ impl IRGenerator {
             Expression::Add(expr1, expr2) => {
 
                 // todo, negative case
-                assert!(negate == false);
+                assert!(!negate);
 
-                self.evaluate_short_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_short_expression_into(*expr1, into, negate)?;
 
                 let old_lower_copy = self.allocate_temporary();
-                self.do_copy(old_lower_copy.clone(), into.clone(), false);
+                self.do_copy(old_lower_copy, into, false);
 
-                self.evaluate_short_expression_into(*expr2, into.clone(), negate)?;
+                self.evaluate_short_expression_into(*expr2, into, negate)?;
 
                 let new_lower_copy = self.allocate_temporary();
-                self.do_copy(new_lower_copy.clone(), into.clone(), false);
+                self.do_copy(new_lower_copy, into, false);
 
                 let temp = self.allocate_temporary();
                 let into_upper = into + 1;
 
-                self.do_begin_loop();
+                do_while!(self, old_lower_copy, {
 
-                self.do_sub_const(old_lower_copy.clone(), 1);
-                self.do_sub_const(new_lower_copy.clone(), 1);
+                    self.do_sub_const(old_lower_copy, 1);
+                    self.do_sub_const(new_lower_copy, 1);
+    
+                    self.do_move([temp], new_lower_copy, false);
 
-                self.do_move([temp.clone()], new_lower_copy.clone(), false);
+                    do_if!(self, temp, {
+                        self.do_move([new_lower_copy], temp, false);
+                        self.do_sub_const(into_upper, 1);
+                    });
+    
+                    self.do_add_const(into_upper, 1);
 
-                self.do_begin_loop();
-                self.do_move([new_lower_copy.clone()], temp.clone(), false);
-                self.do_sub_const(into_upper.clone(), 1);
-                self.do_end_loop(temp, true);
-
-                self.do_add_const(into_upper, 1);
-
-                self.do_end_loop(old_lower_copy, false);
+                });
 
                 self.do_clear(new_lower_copy);
 
@@ -737,36 +853,36 @@ impl IRGenerator {
                 todo!("not done yet");
 
                 // todo, negative case
-                assert!(negate == false);
+                assert!(!negate);
 
-                self.evaluate_short_expression_into(*expr1, into.clone(), negate)?;
+                self.evaluate_short_expression_into(*expr1, into, negate)?;
 
                 let old_lower_copy = self.allocate_temporary();
-                self.do_copy(old_lower_copy.clone(), into.clone(), false);
+                self.do_copy(old_lower_copy, into, false);
 
-                self.evaluate_short_expression_into(*expr2, into.clone(), true)?;
+                self.evaluate_short_expression_into(*expr2, into, true)?;
 
                 let new_lower_copy = self.allocate_temporary();
-                self.do_copy(new_lower_copy.clone(), into.clone(), false);
+                self.do_copy(new_lower_copy, into, false);
 
                 let temp = self.allocate_temporary();
                 let into_upper = into + 1;
 
-                self.do_begin_loop();
+                do_while!(self, new_lower_copy, {
 
-                self.do_sub_const(old_lower_copy.clone(), 1);
-                self.do_sub_const(new_lower_copy.clone(), 1);
+                    self.do_sub_const(old_lower_copy, 1);
+                    self.do_sub_const(new_lower_copy, 1);
+    
+                    self.do_move([temp], old_lower_copy, false);
 
-                self.do_move([temp.clone()], old_lower_copy.clone(), false);
+                    do_if!(self, temp, {
+                        self.do_move([old_lower_copy], temp, false);
+                        self.do_add_const(into_upper, 1);
+                    });
+    
+                    self.do_sub_const(into_upper, 1);
 
-                self.do_begin_loop();
-                self.do_move([old_lower_copy.clone()], temp.clone(), false);
-                self.do_add_const(into_upper.clone(), 1);
-                self.do_end_loop(temp, true);
-
-                self.do_sub_const(into_upper, 1);
-
-                self.do_end_loop(new_lower_copy, false);
+                });
 
                 self.do_clear(old_lower_copy);
 
@@ -801,7 +917,7 @@ impl IRGenerator {
             }
             _ => {
                 let mem = self.allocate_temporary();
-                self.evaluate_expression_into(expression, expected_type, mem.clone())?;
+                self.evaluate_expression_into(expression, expected_type, mem)?;
                 (mem, true)
             }
         })
@@ -847,7 +963,7 @@ impl IRGenerator {
 
                             let with_offset = mem + char_num + type_offset;
 
-                            self.do_clear(with_offset.clone());
+                            self.do_clear(with_offset);
                             self.do_add_const(with_offset, char as u8);
 
                         }
@@ -859,19 +975,17 @@ impl IRGenerator {
                     if expression.contains_name(&name) {
 
                         match data_type {
-                            DataType::Bool | DataType::Byte => {
-                                let temp = self.allocate_temporary();
+                            DataType::Bool | DataType::Byte => with_temp!(self, temp, {
                                 self.evaluate_expression_into(expression, &data_type, temp)?;
-                                self.do_clear(mem.clone());
+                                self.do_clear(mem);
                                 self.do_move([mem], temp, false);
-                                self.do_free(temp);
-                            }
+                            }),
                             DataType::Short => todo!(),
                             _ => todo!()
                         }
                     }
                     else {
-                        self.do_clear(mem.clone());
+                        self.do_clear(mem);
                         self.evaluate_expression_into(expression, &data_type, mem)?;
                     }
                 }
@@ -913,17 +1027,17 @@ impl IRGenerator {
 
                     if let Expression::StringLiteral(literal) = expression {
 
-                        let temp = self.allocate_temporary();
+                        with_temp!(self, temp, {
 
-                        let mut val = 0u8;
-
-                        for chr in literal.chars() {
-                            self.do_add_const(temp.clone(), (chr as u8).wrapping_sub(val));
-                            self.do_write(temp.clone());
-                            val = chr as u8;
-                        }
-
-                        self.do_free_access(temp);
+                            let mut val = 0u8;
+    
+                            for chr in literal.chars() {
+                                self.do_add_const(temp, (chr as u8).wrapping_sub(val));
+                                self.do_write(temp);
+                                val = chr as u8;
+                            }
+                        });
+                        
                         continue;
                     
                     }
@@ -943,7 +1057,7 @@ impl IRGenerator {
                     }
 
                     let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte)?;
-                    self.do_write(mem.clone());
+                    self.do_write(mem);
                     self.try_free_access(mem, is_temp);
 
                 }
@@ -954,6 +1068,12 @@ impl IRGenerator {
 
                     self.try_free_access(mem, is_temp);
 
+                }
+                StatementBody::WriteLine => {
+                    with_temp!(self, temp, {
+                        self.do_add_const(temp, 10);
+                        self.do_write(temp);
+                    });
                 }
                 StatementBody::Read(accessor) => {
                     let (access, data_type) = self.resolve_accessor(accessor)?;
@@ -969,7 +1089,7 @@ impl IRGenerator {
                         let (mem, data_type) = self.resolve_accessor(accessor)?;
                         self.assert_data_type(&data_type, &DataType::Bool)?;
 
-                        self.do_begin_loop();
+                        self.push_ir_to_stack();
                         let loop_ir = self.generate_ir(loop_statements)?;
                         self.ir.0.extend(loop_ir.0);
                         self.do_end_loop(mem, false);
@@ -980,40 +1100,82 @@ impl IRGenerator {
 
                     let (mem1, is_temp1) = self.evaluate_expression(expression.clone(), &DataType::Bool)?;
 
-                    self.do_begin_loop();
+                    do_while!(self, mem1, {
+    
+                        let loop_ir = self.generate_ir(loop_statements)?;
+                        self.ir.0.extend(loop_ir.0);
+    
+                        let (mem2, is_temp2) = self.evaluate_expression(expression, &DataType::Bool)?;
+    
+                        if mem1 != mem2 {
+                            self.do_clear(mem1);
+                            self.do_move([mem1], mem2, false);
+                        }
 
-                    let loop_ir = self.generate_ir(loop_statements)?;
-                    self.ir.0.extend(loop_ir.0);
+                        self.try_free_access(mem2, is_temp2);
 
-                    let (mem2, is_temp2) = self.evaluate_expression(expression, &DataType::Bool)?;
+                    });
 
-                    if mem1 != mem2 {
-                        self.do_move([mem1.clone()], mem2.clone(), false);
-                    }
-
-                    self.do_end_loop(mem1.clone(), false);
-
-                    self.try_free_access(mem2, is_temp2);
                     self.try_free_access(mem1, is_temp1);
 
                 }
                 StatementBody::If(expression, loop_statements) => {
 
-                    let temp = self.allocate_temporary();
-                    self.evaluate_bool_expression_into(expression, temp.clone())?;
-                    
-                    self.do_begin_loop();
+                    with_temp!(self, temp, {
 
-                    let loop_ir = self.generate_ir(loop_statements)?;
-                    self.ir.0.extend(loop_ir.0);
+                        self.evaluate_bool_expression_into(expression, temp)?;
 
-                    self.do_clear(temp.clone());
-                    self.do_end_loop(temp.clone(), true);
+                        do_if!(self, temp, {
+    
+                            let loop_ir = self.generate_ir(loop_statements)?;
+                            self.ir.0.extend(loop_ir.0);
+        
+                            self.do_clear(temp);
 
-                    self.do_free(temp);
-
+                        });
+                    });
                 }
-                _ => todo!()
+                StatementBody::Switch(expression, mut arms, default_statements) => {
+
+                    let temp_block = self.allocate_temporary_block(2);
+                    self.evaluate_byte_expression_into(expression, temp_block + 1, false)?;
+
+                    arms.sort_by(|(case1, _), (case2, _)| {
+                        case1.cmp(case2)
+                    });
+
+                    self.push_ir_to_stack();
+
+                    let arm_ir_blocks: Result<Vec<(u8, IRBlock)>, BrainFricError> = arms.into_iter().map(|(case, block)| {
+
+                        if case == 0 {
+                            panic!("zero case not supported yet");
+                        }
+
+                        let ir = self.generate_ir(block)?;
+                        Ok((case, ir))
+                        
+                    }).collect();
+
+                    let default = match default_statements {
+                        Some(statements) => {
+                            Some(self.generate_ir(statements)?)
+                        }
+                        None => None
+                    };
+
+                    self.pop_ir_from_stack();
+
+                    self.ir.0.push(IRStatement::Switch {
+                        temp_block,
+                        arms: arm_ir_blocks?,
+                        default
+                    });
+
+                    self.free_block(temp_block, 2);
+                    
+                }
+                _ => todo!("unimplemented statement type")
             }
         }
 

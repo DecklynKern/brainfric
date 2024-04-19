@@ -39,6 +39,7 @@ pub enum Token {
     If,
     Switch,
     Case,
+    Default,
     End,
 
     Write,
@@ -54,6 +55,9 @@ pub enum Token {
     CloseSquare,
     OpenAngle,
     CloseAngle,
+
+    LessThanEqual,
+    GreaterThanEqual,
 
     Question,
     Pound,
@@ -96,6 +100,7 @@ impl Token {
             "if" => Self::If,
             "switch" => Self::Switch,
             "case" => Self::Case,
+            "default" => Self::Default,
             "end" => Self::End,
             "write" => Self::Write,
             "writenum" => Self::WriteNum,
@@ -115,6 +120,8 @@ impl Token {
             "]" => Self::CloseSquare,
             "<" => Self::OpenAngle,
             ">" => Self::CloseAngle,
+            "<=" => Self::LessThanEqual,
+            ">=" => Self::GreaterThanEqual,
             "?" => Self::Question,
             "#" => Self::Pound,
             "!" => Self::Exclamation,
