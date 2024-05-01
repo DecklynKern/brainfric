@@ -1,18 +1,9 @@
-byte x
-
-x <- 1
-
-while x != 0
-
-    switch x
-        case 1
-            x <- 3
-        end
-        case 3
-            x <- 2
-        end
-        default
-            x <- 0
-        end
+define
+    enum Moment
+        Bruh = 100
+        NonBruh
     end
 end
+
+var m : Moment
+m <- Moment::Bruh

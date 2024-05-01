@@ -28,10 +28,13 @@ pub enum ParseError {
     InvalidStatement,
     InvalidExpression,
     InvalidAccessor,
+    InvalidType,
+    InvalidDefinition,
     ExpectedOpenAngle,
     ExpectedCloseAngle,
     ExpectedCloseParen,
     ExpectedNumberLiteral,
+    ExpectedName,
     ExpectedEnd,
     ExpectedNewline,
     StringLiteralTooLarge,
@@ -45,10 +48,13 @@ impl ErrorDesc for ParseError {
             Self::InvalidStatement => "Invalid statement",
             Self::InvalidExpression => "Invalid expression",
             Self::InvalidAccessor => "Invalid accessor",
+            Self::InvalidType => "Invalid type",
+            Self::InvalidDefinition => "Invalid definition",
             Self::ExpectedOpenAngle => "Expected '<'",
             Self::ExpectedCloseAngle => "Expected '>'",
             Self::ExpectedCloseParen => "Expected ')'",
             Self::ExpectedNumberLiteral => "Expected number literal",
+            Self::ExpectedName => "Expected name",
             Self::ExpectedEnd => "Expected end statement to block",
             Self::ExpectedNewline => "Expected new line",
             Self::StringLiteralTooLarge => "String literal too large for declared sequence",
@@ -59,6 +65,9 @@ impl ErrorDesc for ParseError {
 
 pub enum IRError {
     UnknownIdentifier(Name),
+    UnknownType(Name),
+    UnknownEnum(Name),
+    UnknownEnumVariant(Name, Name),
     TypeMismatch(DataType, DataType),
     ExpectedSequence,
     ExpectedTypedExpression(DataType),
@@ -73,6 +82,12 @@ impl ErrorDesc for IRError {
         format!("IR Generation Error: {}", match self {
             Self::UnknownIdentifier(identifier) =>
                 format!("Unknown identifier \"{identifier}\""),
+            Self::UnknownType(type_name) =>
+                format!("Unknown type \"{type_name}\""),
+            Self::UnknownEnum(enum_name) => 
+                format!("Unknown enum \"{enum_name}\""),
+            Self::UnknownEnumVariant(enum_name, variant_name) => 
+                format!("Unknown enum variant \"{enum_name}::{variant_name}\""),
             Self::TypeMismatch(expected_type, got_type) =>  
                 format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
             Self::ExpectedSequence =>
@@ -108,6 +123,8 @@ impl BrainFricError {
         println!("{}", self.error.get_description());
     }
 }
+
+pub type MaybeBFErr<Type> = Result<Type, BrainFricError>;
 
 #[macro_export]
 macro_rules! err {

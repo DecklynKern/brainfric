@@ -29,16 +29,23 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
         println!();
     }
 
-    let statements = parse::parse(&tokenized)?;
+    let parsed_program = parse::parse(&tokenized)?;
 
     if args::arg_show_parse() {
         println!("=== PARSER PASS ===");
-        for statement in &statements {
+
+        println!("Definitions:");
+        for definition in &parsed_program.definitions {
+            println!("{definition:?}");
+        }
+
+        println!("Code:");
+        for statement in &parsed_program.code {
             println!("{statement:?}");
         }
     }
 
-    let mut ir = ir::generate_ir(statements)?;
+    let mut ir = ir::generate_ir(parsed_program)?;
 
     if args::arg_show_ir() {
         println!("=== IR PASS ===");

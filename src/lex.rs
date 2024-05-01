@@ -37,10 +37,15 @@ pub enum Token {
 
     While,
     If,
+    Else,
     Switch,
     Case,
     Default,
     End,
+
+    Define,
+    Enum,
+    Var,
 
     Write,
     WriteNum,
@@ -63,6 +68,8 @@ pub enum Token {
     Pound,
     Exclamation,
 
+    Colon,
+    DoubleColon,
     SetTo,
 
     Equal,
@@ -98,10 +105,14 @@ impl Token {
             "rshift" => Self::RightShift,
             "while" => Self::While,
             "if" => Self::If,
+            "else" => Self::Else,
             "switch" => Self::Switch,
             "case" => Self::Case,
             "default" => Self::Default,
             "end" => Self::End,
+            "define" => Self::Define,
+            "enum" => Self::Enum,
+            "var" => Self::Var,
             "write" => Self::Write,
             "writenum" => Self::WriteNum,
             "writeln" => Self::WriteLine,
@@ -125,6 +136,8 @@ impl Token {
             "?" => Self::Question,
             "#" => Self::Pound,
             "!" => Self::Exclamation,
+            ":" => Self::Colon,
+            "::" => Self::DoubleColon,
             "<-" => Self::SetTo,
             "=" => Self::Equal,
             "!=" => Self::NotEqual,

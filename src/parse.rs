@@ -21,13 +21,19 @@ macro_rules! expect_token {
 }
 
 #[derive(Debug)]
+pub enum Definition {
+    Enum(Name, Vec<(Name, u8)>)
+}
+
+#[derive(Debug)]
 pub enum DataTypeHead {
     Bool,
     Byte,
     Short,
     Sequence,
     String,
-    Stack
+    Stack,
+    UserDefined(Name)
 }
 
 #[derive(Debug)]
@@ -51,6 +57,15 @@ pub struct ParsedDataType {
     pub parameters: Vec<DataTypeParameter>
 }
 
+impl Default for ParsedDataType {
+    fn default() -> Self {
+        Self {
+            head: DataTypeHead::Byte,
+            parameters: Vec::new()
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Specifier {
     ConstIndex(u32),
@@ -61,7 +76,7 @@ pub enum Specifier {
 #[derive(PartialEq, Eq, Clone)]
 pub struct Accessor {
     pub name: Name,
-    pub specifiers: Box<[Specifier]>
+    pub specifiers: Vec<Specifier>
 }
 
 impl std::fmt::Debug for Accessor {
@@ -74,6 +89,7 @@ impl std::fmt::Debug for Accessor {
 pub enum Expression {
 
     Access(Accessor),
+    EnumItem(Name, Name),
     BoolLiteral(bool),
     NumberLiteral(i32),
     StringLiteral(Rc<str>),
@@ -113,7 +129,7 @@ pub enum StatementBody {
     WriteLine,
     Read(Accessor),
     While(Expression, Block),
-    If(Expression, Block),
+    If(Expression, Block, Option<Block>),
     Switch(Expression, Vec<(u8, Block)>, Option<Block>)
 }
 
@@ -129,6 +145,11 @@ impl std::fmt::Debug for Statement {
 }
 
 pub type Block = Vec<Statement>;
+
+pub struct ParsedProgram {
+    pub definitions: Vec<Definition>,
+    pub code: Block
+}
 
 struct Parser<'a> {
     line_num: usize,
@@ -180,25 +201,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_parse_data_type_parameter(&mut self) -> Option<DataTypeParameter> {
+    fn parse_data_type_parameter(&mut self) -> Result<DataTypeParameter, BrainFricError> {
 
         let Some(token) = self.tokens.peek() else {
-            return None;
+            err!(self.line_num, ParseError::InvalidType);
         };
 
         if let Token::NumberLiteral(num) = token {
             self.tokens.next();
-            Some(DataTypeParameter::Constant(*num as usize))
+            Ok(DataTypeParameter::Constant(*num as usize))
         }
         else {
-            self.try_parse_data_type().map(DataTypeParameter::Type)
+            self.parse_data_type().map(DataTypeParameter::Type)
         }
     }
 
-    fn try_parse_data_type(&mut self) -> Option<ParsedDataType> {
+    fn parse_data_type(&mut self) -> Result<ParsedDataType, BrainFricError> {
 
         let Some(token) = self.tokens.peek() else {
-            return None;
+            err!(self.line_num, ParseError::InvalidType);
         };
 
         let head = match token {
@@ -209,7 +230,8 @@ impl<'a> Parser<'a> {
             Token::String => DataTypeHead::String,
             Token::Stack => todo!(),
             Token::Array => todo!(),
-            _ => return None
+            Token::Identifier(name) => DataTypeHead::UserDefined(name.clone()),
+            _ => err!(self.line_num, ParseError::InvalidType)
         };
 
         let mut data_type = ParsedDataType {
@@ -226,16 +248,13 @@ impl<'a> Parser<'a> {
             loop {
 
                 if self.try_take_token(Token::CloseAngle) {
-                    return Some(data_type);
+                    return Ok(data_type);
                 }
 
-                match self.try_parse_data_type_parameter() {
-                    Some(parameter) => data_type.parameters.push(parameter),
-                    None => return None
-                }
+                data_type.parameters.push(self.parse_data_type_parameter()?);
 
                 if !first_param && !self.try_take_token(Token::Comma) {
-                    return None;
+                    err!(self.line_num, ParseError::InvalidType);
                 }
 
                 first_param = false;
@@ -243,7 +262,7 @@ impl<'a> Parser<'a> {
             }
         }
         else {
-            Some(data_type)
+            Ok(data_type)
         }
     }
 
@@ -271,14 +290,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_accessor(&mut self) -> Result<Accessor, BrainFricError> {
-
-        let Some(Token::Identifier(name)) = self.tokens.peek()
-        else {
-            err!(self.line_num, ParseError::InvalidExpression);
-        };
-
-        self.tokens.next();
+    fn parse_specifiers(&mut self) -> Vec<Specifier> {
 
         let mut specifiers = Vec::new();
 
@@ -286,9 +298,20 @@ impl<'a> Parser<'a> {
             specifiers.push(specifier);
         }
 
+        specifiers
+
+    }
+
+    fn parse_accessor(&mut self) -> Result<Accessor, BrainFricError> {
+
+        let Some(Token::Identifier(name)) = self.tokens.next()
+        else {
+            err!(self.line_num, ParseError::InvalidExpression);
+        };
+
         Ok(Accessor {
             name: name.clone(),
-            specifiers: specifiers.into()
+            specifiers: self.parse_specifiers()
         })
     }
 
@@ -336,37 +359,46 @@ impl<'a> Parser<'a> {
 
     fn parse_factor(&mut self) -> Result<Expression, BrainFricError> {
 
-        let Some(& token) = self.tokens.peek()
-        else {
+        let Some(token) = self.tokens.next() else {
             err!(self.line_num, ParseError::InvalidExpression);
         };
 
-        if token.is_factor_head() {
+        Ok(match token {
+            Token::OpenParen => {
 
-            self.tokens.next();
+                let expression = self.parse_expression()?;
 
-            match token {
-                Token::OpenParen => {
-
-                    let expression = self.parse_expression()?;
-
-                    if !self.try_take_token(Token::CloseParen) {
-                        err!(self.line_num, ParseError::ExpectedCloseParen);
-                    }
-
-                    Ok(expression)
-                    
+                if !self.try_take_token(Token::CloseParen) {
+                    err!(self.line_num, ParseError::ExpectedCloseParen);
                 }
-                Token::BoolLiteral(val) => Ok(Expression::BoolLiteral(*val)),
-                Token::NumberLiteral(val) => Ok(Expression::NumberLiteral(*val)),
-                Token::CharLiteral(chr) => Ok(Expression::NumberLiteral(*chr as i32)),
-                Token::StringLiteral(val) => Ok(Expression::StringLiteral(val.clone())),
-                _ => unreachable!()
+
+                expression
+                
             }
-        }
-        else {
-            Ok(Expression::Access(self.parse_accessor()?))
-        }
+            Token::BoolLiteral(val) => Expression::BoolLiteral(*val),
+            Token::NumberLiteral(val) => Expression::NumberLiteral(*val),
+            Token::CharLiteral(chr) => Expression::NumberLiteral(*chr as i32),
+            Token::StringLiteral(val) => Expression::StringLiteral(val.clone()),
+            Token::Identifier(name) => {
+
+                if self.try_take_token(Token::DoubleColon) {
+
+                    let Some(Token::Identifier(enum_variant)) = self.tokens.next() else {
+                        err!(self.line_num, ParseError::ExpectedName);
+                    };
+
+                    Expression::EnumItem(name.clone(), enum_variant.clone())
+
+                }
+                else {
+                    Expression::Access(Accessor {
+                        name: name.clone(),
+                        specifiers: self.parse_specifiers()
+                    })
+                }
+            }
+            _ => err!(self.line_num, ParseError::InvalidExpression)
+        })
     }
 
     fn parse_term(&mut self) -> Result<Expression, BrainFricError> {
@@ -435,29 +467,62 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<Statement, BrainFricError> {
 
-        if self.tokens.is_empty() {
+        let line_num = self.line_num;
+
+        let Some(token) = self.tokens.next() else {
             todo!();
         };
 
-        let token = self.tokens.peek().unwrap();
-
         let body = match token {
-
-            Token::If => {
+            Token::Var => {
                 
-                self.tokens.next();
+                let Some(Token::Identifier(name1)) = self.tokens.next()
+                else {
+                    err!(self.line_num, ParseError::InvalidStatement);
+                };
+
+                let mut names = vec![name1.clone()];
+
+                while self.try_take_token(Token::Comma) {
+                    
+                    let Some(Token::Identifier(name)) = self.tokens.next()
+                    else {
+                        err!(self.line_num, ParseError::InvalidStatement)
+                    };
+
+                    names.push(name.clone());
+
+                }
+
+                let data_type = if self.try_take_token(Token::Colon) {
+                    self.parse_data_type()?
+                }
+                else {
+                    ParsedDataType::default()
+                };
+    
+                StatementBody::Declaration(names, data_type)
+
+            }
+            Token::If => {
 
                 let condition = self.parse_expression()?;
                 self.expect_newline()?;
 
                 let block = self.parse_block()?;
 
-                StatementBody::If(condition, block)
+                let else_block = if self.try_take_token(Token::Else) {
+                    self.expect_newline()?;
+                    Some(self.parse_block()?)
+                }
+                else {
+                    None
+                };
+
+                StatementBody::If(condition, block, else_block)
 
             }
             Token::While => {
-                
-                self.tokens.next();
 
                 let condition = self.parse_expression()?;
                 self.expect_newline()?;
@@ -468,8 +533,6 @@ impl<'a> Parser<'a> {
 
             }
             Token::Switch => {
-
-                self.tokens.next();
 
                 let expr = self.parse_expression()?;
 
@@ -518,89 +581,55 @@ impl<'a> Parser<'a> {
                 StatementBody::Switch(expr, arms, default)
 
             }
+            Token::Identifier(name) => {
 
-            Token::Identifier(_) => {
+                let accessor = Accessor {
+                    name: name.clone(),
+                    specifiers: self.parse_specifiers()
+                };
 
-                let accessor = self.parse_accessor()?;
                 self.try_take_token(Token::SetTo);
                 let expression = self.parse_expression()?;
 
                 StatementBody::SetTo(accessor, expression)
 
             }
-
-            _ => {
-
-                if let Some(data_type) = self.try_parse_data_type() {
-
-                    let Some(Token::Identifier(name1)) = self.tokens.next()
-                    else {
-                        err!(self.line_num, ParseError::InvalidStatement);
-                    };
-    
-                    let mut names = vec![name1.clone()];
-    
-                    while self.try_take_token(Token::Comma) {
-                        
-                        let Some(Token::Identifier(name)) = self.tokens.next()
-                        else {
-                            err!(self.line_num, ParseError::InvalidStatement)
-                        };
-    
-                        names.push(name.clone());
-    
-                    }
-        
-                    StatementBody::Declaration(names, data_type)
-
+            Token::Inc => StatementBody::Inc(self.parse_accessor()?),
+            Token::Dec => StatementBody::Dec(self.parse_accessor()?),
+            Token::Clear => StatementBody::Clear(self.parse_accessor()?),
+            Token::Read => StatementBody::Read(self.parse_accessor()?),
+            Token::LeftShift | Token::RightShift => {
+                
+                if !self.try_take_token(Token::OpenAngle) {
+                    err!(self.line_num, ParseError::ExpectedOpenAngle);
+                }
+                
+                let Some(Token::NumberLiteral(offset)) = self.tokens.next()
+                else {
+                    err!(self.line_num, ParseError::ExpectedNumberLiteral);
+                };
+                
+                if !self.try_take_token(Token::CloseAngle) {
+                    err!(self.line_num, ParseError::ExpectedCloseAngle);
+                }
+                
+                let accessor = self.parse_accessor()?;
+                
+                if *token == Token::LeftShift {
+                    StatementBody::LeftShift(accessor, *offset as u32)
                 }
                 else {
-
-                    let token1 = self.tokens.next().unwrap();
-        
-                    match token1 {
-
-                        Token::Inc => StatementBody::Inc(self.parse_accessor()?),
-                        Token::Dec => StatementBody::Dec(self.parse_accessor()?),
-                        Token::Clear => StatementBody::Clear(self.parse_accessor()?),
-                        Token::Read => StatementBody::Read(self.parse_accessor()?),
-                        
-                        Token::LeftShift | Token::RightShift => {
-                            
-                            if !self.try_take_token(Token::OpenAngle) {
-                                err!(self.line_num, ParseError::ExpectedOpenAngle);
-                            }
-                            
-                            let Some(Token::NumberLiteral(offset)) = self.tokens.next()
-                            else {
-                                err!(self.line_num, ParseError::ExpectedNumberLiteral);
-                            };
-                            
-                            if !self.try_take_token(Token::CloseAngle) {
-                                err!(self.line_num, ParseError::ExpectedCloseAngle);
-                            }
-                            
-                            let accessor = self.parse_accessor()?;
-                            
-                            if *token1 == Token::LeftShift {
-                                StatementBody::LeftShift(accessor, *offset as u32)
-                            }
-                            else {
-                                StatementBody::RightShift(accessor, *offset as u32)
-                            }
-                        }
-                        Token::Write => StatementBody::Write(self.parse_expression()?),
-                        Token::WriteNum => StatementBody::WriteNum(self.parse_expression()?),
-                        Token::WriteLine => StatementBody::WriteLine,
-
-                        _ => err!(self.line_num, ParseError::InvalidStatement)
-                    }
+                    StatementBody::RightShift(accessor, *offset as u32)
                 }
             }
+            Token::Write => StatementBody::Write(self.parse_expression()?),
+            Token::WriteNum => StatementBody::WriteNum(self.parse_expression()?),
+            Token::WriteLine => StatementBody::WriteLine,
+            _ => err!(self.line_num, ParseError::InvalidStatement)
         };
         
         Ok(Statement {
-            line_num: self.line_num,
+            line_num,
             body
         })
     }
@@ -616,6 +645,11 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            // hacky
+            if *token == Token::Else {
+                break;
+            }
+
             statements.push(self.parse_statement()?);
 
             if !self.tokens.is_empty() {
@@ -626,15 +660,104 @@ impl<'a> Parser<'a> {
         Ok(statements)
 
     }
+
+    fn parse_definition(&mut self) -> Result<Definition, BrainFricError> {
+
+        if self.tokens.is_empty() {
+            todo!()
+        }
+
+        Ok(match self.tokens.next().unwrap() {
+            Token::Enum => {
+
+                let Some(Token::Identifier(name)) = self.tokens.next() else {
+                    err!(self.line_num, ParseError::ExpectedName);
+                };
+
+                self.expect_newline()?;
+
+                let mut next_value = 0;
+                let mut variants = Vec::new();
+
+                while let Some(token) = self.tokens.next() {
+                    match token {
+                        Token::End => {
+                            break;
+                        }
+                        Token::Identifier(variant_name) => {
+                            
+                            let value = if self.try_take_token(Token::Equal) {
+
+                                let Some(Token::NumberLiteral(val)) = self.tokens.next() else {
+                                    err!(self.line_num, ParseError::InvalidDefinition);
+                                };
+
+                                *val as u8
+
+                            }
+                            else {
+                                next_value
+                            };
+
+                            next_value = value + 1;
+
+                            variants.push((variant_name.clone(), value))
+
+                        }
+                        _ => err!(self.line_num, ParseError::InvalidDefinition)
+                    }
+
+                    self.expect_newline()?;
+
+                }
+
+                Definition::Enum(name.clone(), variants)
+
+            }
+            _ => err!(self.line_num, ParseError::InvalidDefinition)
+        })
+    }
+
+    fn parse_program(&mut self) -> Result<ParsedProgram, BrainFricError> {
+
+        let mut definitions = Vec::new();
+
+        if self.try_take_token(Token::Define) {
+
+            self.expect_newline()?;
+
+            while let Some(&token) = self.tokens.peek() {
+
+                if *token == Token::End {
+                    self.tokens.next();
+                    self.expect_newline()?;
+                    break;
+                }
+
+                definitions.push(self.parse_definition()?);
+
+                if !self.tokens.is_empty() {
+                    self.expect_newline()?;
+                }
+            }
+        };
+
+        let code = self.parse_block()?;
+
+        Ok(ParsedProgram {
+            definitions,
+            code
+        })
+    }
 }
 
-pub fn parse(code: &[Token]) -> Result<Block, BrainFricError> {
+pub fn parse(code: &[Token]) -> Result<ParsedProgram, BrainFricError> {
 
     let mut parser = Parser {
         line_num: 1,
         tokens: code.iter().peekable()
     };
 
-    parser.parse_block()
+    parser.parse_program()
 
 }
