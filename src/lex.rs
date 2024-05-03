@@ -45,6 +45,7 @@ pub enum Token {
 
     Define,
     Enum,
+    Struct,
     Var,
 
     Write,
@@ -112,6 +113,7 @@ impl Token {
             "end" => Self::End,
             "define" => Self::Define,
             "enum" => Self::Enum,
+            "struct" => Self::Struct,
             "var" => Self::Var,
             "write" => Self::Write,
             "writenum" => Self::WriteNum,

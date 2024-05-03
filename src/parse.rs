@@ -22,7 +22,8 @@ macro_rules! expect_token {
 
 #[derive(Debug)]
 pub enum Definition {
-    Enum(Name, Vec<(Name, u8)>)
+    Enum(Name, Vec<(Name, u8)>),
+    Struct(Name, Vec<(Name, ParsedDataType)>)
 }
 
 #[derive(Debug)]
@@ -66,11 +67,10 @@ impl Default for ParsedDataType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Specifier {
     ConstIndex(u32),
-    Lower,
-    Upper
+    Field(Name)
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -86,10 +86,16 @@ impl std::fmt::Debug for Accessor {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum MatchArm {
+    NumberLiteral(u8),
+    EnumVariant(Name, Name)
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expression {
 
     Access(Accessor),
-    EnumItem(Name, Name),
+    EnumVariant(Name, Name),
     BoolLiteral(bool),
     NumberLiteral(i32),
     StringLiteral(Rc<str>),
@@ -118,7 +124,7 @@ pub enum Expression {
 #[derive(Debug)]
 pub enum StatementBody {
     Declaration(Vec<Name>, ParsedDataType),
-    SetTo(Accessor, Expression),
+    Assign(Accessor, Expression),
     Inc(Accessor),
     Dec(Accessor),
     Clear(Accessor),
@@ -130,7 +136,7 @@ pub enum StatementBody {
     Read(Accessor),
     While(Expression, Block),
     If(Expression, Block, Option<Block>),
-    Switch(Expression, Vec<(u8, Block)>, Option<Block>)
+    Switch(Expression, Vec<(MatchArm, Block)>, Option<Block>)
 }
 
 pub struct Statement {
@@ -203,7 +209,8 @@ impl<'a> Parser<'a> {
 
     fn parse_data_type_parameter(&mut self) -> Result<DataTypeParameter, BrainFricError> {
 
-        let Some(token) = self.tokens.peek() else {
+        let Some(token) = self.tokens.peek()
+        else {
             err!(self.line_num, ParseError::InvalidType);
         };
 
@@ -218,7 +225,8 @@ impl<'a> Parser<'a> {
 
     fn parse_data_type(&mut self) -> Result<ParsedDataType, BrainFricError> {
 
-        let Some(token) = self.tokens.peek() else {
+        let Some(token) = self.tokens.peek()
+        else {
             err!(self.line_num, ParseError::InvalidType);
         };
 
@@ -251,11 +259,11 @@ impl<'a> Parser<'a> {
                     return Ok(data_type);
                 }
 
-                data_type.parameters.push(self.parse_data_type_parameter()?);
-
                 if !first_param && !self.try_take_token(Token::Comma) {
                     err!(self.line_num, ParseError::InvalidType);
                 }
+
+                data_type.parameters.push(self.parse_data_type_parameter()?);
 
                 first_param = false;
 
@@ -275,11 +283,7 @@ impl<'a> Parser<'a> {
                     // change when array happens
                     expect_token!(self.tokens, Token::NumberLiteral(idx), {Specifier::ConstIndex(*idx as u32)}),
                 Token::Dot => match self.tokens.next() {
-                    Some(Token::Identifier(ident)) => match ident.deref() {
-                        "low" => Specifier::Lower,
-                        "high" => Specifier::Upper,
-                        _ => return None
-                    }
+                    Some(Token::Identifier(ident)) => Specifier::Field(ident.clone()),
                     _ => return None
                 }
                 _ => unreachable!()
@@ -334,7 +338,8 @@ impl<'a> Parser<'a> {
 
     fn try_parse_binary_operator_precedence_1(&mut self) -> Option<fn(Box<Expression>, Box<Expression>) -> Expression> {
 
-        let Some(op_token) = self.tokens.peek() else {
+        let Some(op_token) = self.tokens.peek()
+        else {
             return None;
         };
 
@@ -359,7 +364,8 @@ impl<'a> Parser<'a> {
 
     fn parse_factor(&mut self) -> Result<Expression, BrainFricError> {
 
-        let Some(token) = self.tokens.next() else {
+        let Some(token) = self.tokens.next()
+        else {
             err!(self.line_num, ParseError::InvalidExpression);
         };
 
@@ -387,7 +393,7 @@ impl<'a> Parser<'a> {
                         err!(self.line_num, ParseError::ExpectedName);
                     };
 
-                    Expression::EnumItem(name.clone(), enum_variant.clone())
+                    Expression::EnumVariant(name.clone(), enum_variant.clone())
 
                 }
                 else {
@@ -469,7 +475,8 @@ impl<'a> Parser<'a> {
 
         let line_num = self.line_num;
 
-        let Some(token) = self.tokens.next() else {
+        let Some(token) = self.tokens.next()
+        else {
             todo!();
         };
 
@@ -560,17 +567,17 @@ impl<'a> Parser<'a> {
                         break;
                     }
 
-                    let val = match self.tokens.next() {
-                        Some(Token::NumberLiteral(num)) => *num as u8,
-                        Some(Token::CharLiteral(chr)) => *chr as u8,
-                        _ => err!(self.line_num, ParseError::ExpectedNumberLiteral)
+                    let arm = match self.parse_factor()? {
+                        Expression::NumberLiteral(num) => MatchArm::NumberLiteral(num as u8),
+                        Expression::EnumVariant(enum_name, variant_name) => MatchArm::EnumVariant(enum_name, variant_name),
+                        _ => err!(self.line_num, ParseError::ExpectedMatchArm)
                     };
 
                     self.expect_newline()?;
 
                     let block = self.parse_block()?;
 
-                    arms.push((val, block));
+                    arms.push((arm, block));
 
                 }
 
@@ -591,7 +598,7 @@ impl<'a> Parser<'a> {
                 self.try_take_token(Token::SetTo);
                 let expression = self.parse_expression()?;
 
-                StatementBody::SetTo(accessor, expression)
+                StatementBody::Assign(accessor, expression)
 
             }
             Token::Inc => StatementBody::Inc(self.parse_accessor()?),
@@ -681,9 +688,7 @@ impl<'a> Parser<'a> {
 
                 while let Some(token) = self.tokens.next() {
                     match token {
-                        Token::End => {
-                            break;
-                        }
+                        Token::End => break,
                         Token::Identifier(variant_name) => {
                             
                             let value = if self.try_take_token(Token::Equal) {
@@ -712,6 +717,41 @@ impl<'a> Parser<'a> {
                 }
 
                 Definition::Enum(name.clone(), variants)
+
+            }
+            Token::Struct => {
+
+                let Some(Token::Identifier(name)) = self.tokens.next() else {
+                    err!(self.line_num, ParseError::ExpectedName);
+                };
+
+                self.expect_newline()?;
+
+                let mut fields = Vec::new();
+
+                while let Some(token) = self.tokens.next() {
+                    match token {
+                        Token::End => break,
+                        Token::Identifier(field_name) => {
+
+                            let data_type = if self.try_take_token(Token::Colon) {
+                                self.parse_data_type()?
+                            }
+                            else {
+                                ParsedDataType::default()
+                            };
+
+                            fields.push((field_name.clone(), data_type));
+
+                        }
+                        _ => err!(self.line_num, ParseError::InvalidDefinition)
+                    }
+
+                    self.expect_newline()?;
+
+                }
+
+                Definition::Struct(name.clone(), fields)
 
             }
             _ => err!(self.line_num, ParseError::InvalidDefinition)

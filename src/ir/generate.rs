@@ -7,103 +7,7 @@ use crate::err;
 use crate::lex::Name;
 use crate::parse::*;
 
-use super::definitions::*;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DataType {
-    Bool,
-    Byte,
-    Short,
-    Sequence(Box<DataType>, usize),
-    String(usize),
-    Stack(Box<DataType>, usize),
-    UserEnum(EnumID)
-    //Array(Rc<DataType>, usize)
-}
-
-impl DataType {
-
-    fn get_subtype(arg: &DataTypeParameter) -> &ParsedDataType {
-        match arg {
-            DataTypeParameter::Constant(_) => unreachable!(),
-            DataTypeParameter::Type(subtype) => subtype
-        }
-    }
-
-    fn get_constant_val(arg: &DataTypeParameter) -> usize {
-        match arg {
-            DataTypeParameter::Constant(val) => *val,
-            DataTypeParameter::Type(_) => unreachable!()
-        }
-    }
-
-    pub fn convert_parsed(parsed_data_type: &ParsedDataType, line_num: usize, user_definitions: &UserDefinitions) -> Result<Self, BrainFricError> {
-
-        let params = &parsed_data_type.parameters;
-
-        const CONSTANT: u32 = 0;
-        const TYPE: u32 = 1;
-
-        let expected_types = match parsed_data_type.head {
-            DataTypeHead::Sequence => vec![TYPE, CONSTANT],
-            DataTypeHead::String => vec![CONSTANT],
-            DataTypeHead::Stack => vec![TYPE, CONSTANT],
-            _ => vec![]
-        };
-
-        if expected_types.len() != params.len() {
-            err!(line_num, IRError::InvalidTypeParameters);
-        }
-
-        for idx in 0..expected_types.len() {
-            if expected_types[idx] != params[idx].get_type_val() {
-                err!(line_num, IRError::InvalidTypeParameters);
-            }
-        }
-
-        Ok(match &parsed_data_type.head {
-            DataTypeHead::Bool => DataType::Bool,
-            DataTypeHead::Byte => DataType::Byte,
-            DataTypeHead::Short => DataType::Short,
-            DataTypeHead::Sequence => DataType::Sequence(
-                Box::new(Self::convert_parsed(Self::get_subtype(&params[0]), line_num, user_definitions)?),
-                Self::get_constant_val(&params[1])
-            ),
-            DataTypeHead::String => DataType::String(
-                Self::get_constant_val(&params[0])
-            ),
-            DataTypeHead::Stack => DataType::Stack(
-                Box::new(Self::convert_parsed(Self::get_subtype(&params[0]), line_num, user_definitions)?),
-                Self::get_constant_val(&params[1])
-            ),
-            DataTypeHead::UserDefined(name) => {
-
-                let Some(enum_id) = user_definitions.enums.get(name) else {
-                    err!(line_num, IRError::UnknownType(name.clone()));
-                };
-
-                DataType::UserEnum(*enum_id)
-
-            }
-        })
-    }
-
-    pub fn get_size(&self) -> usize {
-
-        match &self {
-            Self::Bool => 1,
-            Self::Byte => 1,
-            Self::Short => 2,
-            Self::Sequence(data_type, len) => len * data_type.get_size(),
-            Self::String(len) => len + 2,
-            Self::Stack(data_type, len) => len * (data_type.get_size() + 1) + 1,
-            Self::UserEnum(_) => 1,
-            //Self::Array(data_type, len) => data_type.get_size() * len
-        }
-    }
-}
-
-pub type Identifier = usize;
+use super::types::*;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Allocation {
@@ -231,7 +135,7 @@ pub enum IRStatement {
 
 pub fn generate_ir(parsed_program: ParsedProgram) -> Result<IRBlock, BrainFricError> {
 
-    let user_definitions = get_user_definitions(parsed_program.definitions);
+    let user_definitions = UserDefinitions::new(parsed_program.definitions)?;
 
     let mut ir_generator = IRGenerator {
         loop_stack: Vec::new(),
@@ -305,7 +209,7 @@ impl IRGenerator {
 
     fn allocate_variable(&mut self, name: Name, data_type: DataType) -> Identifier {
 
-        let size = data_type.get_size();
+        let size = data_type.get_size(&self.user_definitions);
 
         for id in self.next_identifier..self.next_identifier + size {
             self.ir.0.push(IRStatement::Alloc(Allocation::Variable(id)));
@@ -318,11 +222,11 @@ impl IRGenerator {
 
     }
 
-    fn resolve_accessor(&self, accessor: Accessor) -> Result<(Identifier, DataType), BrainFricError> {
+    fn resolve_accessor(&self, accessor: &Accessor) -> Result<(Identifier, DataType), BrainFricError> {
 
         let (id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
             ||
-                err!(self.current_line_num, IRError::UnknownIdentifier(accessor.name)),
+                err!(self.current_line_num, IRError::UnknownIdentifier(accessor.name.clone())),
             |(id, data_type)|
                 Ok((id, data_type.clone()))
         )?;
@@ -332,18 +236,18 @@ impl IRGenerator {
         let mut true_id = *id;
 
         for specifier in accessor.specifiers.iter() {
-            match (specifier, data_type) {
-                (Specifier::ConstIndex(idx), DataType::Sequence(inner_type, len)) => {
+            match (data_type, specifier) {
+                (DataType::Sequence(inner_type, len), Specifier::ConstIndex(idx)) => {
 
                     if *idx as usize >= len {
                         err!(self.current_line_num, IRError::OutOfBoundsAccess);
                     }
 
-                    true_id += *idx as usize * inner_type.get_size();
+                    true_id += *idx as usize * inner_type.get_size(&self.user_definitions);
                     data_type = *inner_type;
                     
                 }
-                (Specifier::ConstIndex(idx), DataType::String(len)) => {
+                (DataType::String(len), Specifier::ConstIndex(idx)) => {
 
                     if *idx as usize >= len {
                         err!(self.current_line_num, IRError::OutOfBoundsAccess);
@@ -353,18 +257,64 @@ impl IRGenerator {
                     data_type = DataType::Byte;
                     
                 }
-                (Specifier::Lower, DataType::Short) => {
-                    data_type = DataType::Byte;
-                }
-                (Specifier::Upper, DataType::Short) => {
-                    true_id += 1;
-                    data_type = DataType::Byte;
+                (data_type_again, Specifier::Field(field_name)) => {
+
+                    let Some((new_data_type, offset)) = self.get_field_data(&data_type_again, field_name.clone())
+                    else {
+                        todo!("bad access");
+                    };
+                    
+                    true_id += offset;
+                    data_type = new_data_type;
+
                 }
                 _ => todo!("bad access")
             }
         }
 
         Ok((true_id, data_type))
+
+    }
+
+    fn resolve_enum_variant(&self, enum_name: &Name, variant_name: &Name) -> Result<u8, BrainFricError> {
+
+        let Some(&enum_id) = self.user_definitions.enum_name_table.get(enum_name) else {
+            err!(self.current_line_num, IRError::UnknownEnum(enum_name.clone()));
+        };
+
+        let Some(&value) = self.user_definitions.enums[enum_id].0.get(variant_name) else {
+            err!(self.current_line_num, IRError::UnknownEnumVariant(enum_name.clone(), variant_name.clone()));
+        };
+
+        Ok(value)
+
+    }
+
+    fn get_field_data(&self, data_type: &DataType, field_name: Name) -> Option<(DataType, usize)> {
+        Some(match (data_type, field_name.as_ref()) {
+            (DataType::Short, "lower") => (DataType::Byte, 0),
+            (DataType::Short, "upper") => (DataType::Byte, 1),
+            (DataType::UserStruct(struct_id), _) => return self.user_definitions.structs[*struct_id].fields.get(&field_name).cloned(),
+            _ => return None
+        })
+    }
+
+    fn try_get_expression_enum_id(&self, expression: &Expression) -> Option<usize> {
+        match expression {
+            Expression::Access(accessor) => {
+
+                let Ok((_, data_type)) = self.resolve_accessor(&accessor) else {
+                    return None;
+                };
+
+                match data_type {
+                    DataType::UserEnum(enum_id) => Some(enum_id),
+                    _ => None
+                }
+            }
+            Expression::EnumVariant(enum_name, _) => self.user_definitions.enum_name_table.get(enum_name).map(|enum_id| *enum_id),
+            _ => None
+        }
     }
 
     fn do_move_raw<const N: usize>(&mut self, to: [(Identifier, bool); N], from: Identifier) {
@@ -480,7 +430,7 @@ impl IRGenerator {
         match expression {
 
             Expression::Access(accessor) => {
-                let (id, data_type) = self.resolve_accessor(accessor)?;
+                let (id, data_type) = self.resolve_accessor(&accessor)?;
                 self.assert_data_type(&DataType::Bool, &data_type)?;
                 self.do_copy(into, id, false);
             }
@@ -552,12 +502,24 @@ impl IRGenerator {
 
                 with_temp!(self, temp, {
 
-                    self.evaluate_byte_expression_into(*expr1, temp, false)?;
-                    self.evaluate_byte_expression_into(*expr2, temp, true)?;
+                    if let Some(enum_id) = self.try_get_expression_enum_id(&expr1) {
 
-                    do_if!(self, temp, {
-                        self.do_sub_const(into, 1);
-                    });
+                        self.evaluate_enum_expression_into(*expr1, temp, enum_id, false)?;
+                        self.evaluate_enum_expression_into(*expr2, temp, enum_id, true)?;
+    
+                        do_if!(self, temp, {
+                            self.do_sub_const(into, 1);
+                        });
+                    }
+                    else {
+
+                        self.evaluate_byte_expression_into(*expr1, temp, false)?;
+                        self.evaluate_byte_expression_into(*expr2, temp, true)?;
+    
+                        do_if!(self, temp, {
+                            self.do_sub_const(into, 1);
+                        });
+                    }
                 });
             }
             Expression::NotEquals(expr1, expr2) => {
@@ -680,7 +642,7 @@ impl IRGenerator {
         match expression {
 
             Expression::Access(accessor) => {
-                let (id, data_type) = self.resolve_accessor(accessor)?;
+                let (id, data_type) = self.resolve_accessor(&accessor)?;
                 self.assert_data_type(&DataType::Byte, &data_type)?;
                 self.do_copy(into, id, negate);
             }
@@ -731,7 +693,7 @@ impl IRGenerator {
 
         match expression {
             Expression::Access(accessor) => {
-                let (id, data_type) = self.resolve_accessor(accessor)?;
+                let (id, data_type) = self.resolve_accessor(&accessor)?;
                 self.assert_data_type(&DataType::Short, &data_type)?;
                 self.do_copy_short(into, id, negate);
             }
@@ -831,27 +793,24 @@ impl IRGenerator {
 
     }
 
-    fn evaluate_enum_expression_into(&mut self, expression: Expression, into: Identifier, enum_id: EnumID) -> Result<(), BrainFricError> {
+    fn evaluate_enum_expression_into(&mut self, expression: Expression, into: Identifier, enum_id: usize, negate: bool) -> Result<(), BrainFricError> {
         
         match expression {
             Expression::Access(accessor) => {
-                let (id, data_type) = self.resolve_accessor(accessor)?;
+                let (id, data_type) = self.resolve_accessor(&accessor)?;
                 self.assert_data_type(&DataType::UserEnum(enum_id), &data_type)?;
-                self.do_copy(into, id, false);
+                self.do_copy(into, id, negate);
             }
-            Expression::EnumItem(enum_name, variant_name) => {
-                
-                let Some(&enum_id) = self.user_definitions.enums.get(&enum_name) else {
-                    err!(self.current_line_num, IRError::UnknownEnum(enum_name));
-                };
+            Expression::EnumVariant(enum_name, variant_name) => {
 
-                let Some(&value) = self.user_definitions.enum_variants.get(&(enum_id, variant_name.clone())) else {
-                    err!(self.current_line_num, IRError::UnknownEnumVariant(enum_name, variant_name));
-                };
+                let value = self.resolve_enum_variant(&enum_name, &variant_name)?;
 
-                self.do_clear(into);
-                self.do_add_const(into, value);
-            
+                if negate {
+                    self.do_sub_const(into, value);
+                }
+                else {
+                    self.do_add_const(into, value);
+                }
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::UserEnum(enum_id)))
         }
@@ -870,7 +829,7 @@ impl IRGenerator {
             DataType::Short =>
                 self.evaluate_short_expression_into(expression, into, false),
             DataType::UserEnum(enum_id) => 
-                self.evaluate_enum_expression_into(expression, into, *enum_id),
+                self.evaluate_enum_expression_into(expression, into, *enum_id, false),
             _ => todo!()
         }
     }
@@ -879,7 +838,7 @@ impl IRGenerator {
         
         Ok(match expression {
             Expression::Access(accessor) => {
-                let (mem, data_type) = self.resolve_accessor(accessor)?;
+                let (mem, data_type) = self.resolve_accessor(&accessor)?;
                 self.assert_data_type(expected_type, &data_type)?;
                 (mem, false)
             }
@@ -909,10 +868,10 @@ impl IRGenerator {
                         self.allocate_variable(name, data_type.clone());
                     }
                 }
-                StatementBody::SetTo(accessor, expression) => {
+                StatementBody::Assign(accessor, expression) => {
 
                     let name = accessor.name.clone();
-                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    let (mem, data_type) = self.resolve_accessor(&accessor)?;
 
                     if let (
                         DataType::Sequence(box DataType::Byte, seq_size) | DataType::String(seq_size),
@@ -959,21 +918,21 @@ impl IRGenerator {
                 }
                 StatementBody::Inc(accessor) => {
 
-                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    let (mem, data_type) = self.resolve_accessor(&accessor)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_add_const(mem, 1);
 
                 }
                 StatementBody::Dec(accessor) => {
 
-                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    let (mem, data_type) = self.resolve_accessor(&accessor)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_sub_const(mem, 1);
 
                 }
                 StatementBody::Clear(accessor) => {
 
-                    let (mem, data_type) = self.resolve_accessor(accessor)?;
+                    let (mem, data_type) = self.resolve_accessor(&accessor)?;
 
                     if !matches!(data_type, DataType::Sequence(_, _)) {
                         err!(self.current_line_num, IRError::ExpectedSequence);
@@ -981,7 +940,7 @@ impl IRGenerator {
                     
                     // make more sophisticated
 
-                    for cell in 0..data_type.get_size() {
+                    for cell in 0..data_type.get_size(&self.user_definitions) {
                         self.do_clear(mem + cell);
                     }
                 }
@@ -1012,7 +971,7 @@ impl IRGenerator {
                     
                     if let Expression::Access(access) = &expression {
 
-                        let (mem, data_type) = self.resolve_accessor(access.clone())?;
+                        let (mem, data_type) = self.resolve_accessor(&access.clone())?;
 
                         if let DataType::Sequence(box DataType::Byte, len) = data_type {
                             self.do_write_byte_seq(mem, len);
@@ -1044,7 +1003,7 @@ impl IRGenerator {
                     });
                 }
                 StatementBody::Read(accessor) => {
-                    let (access, data_type) = self.resolve_accessor(accessor)?;
+                    let (access, data_type) = self.resolve_accessor(&accessor)?;
                     self.assert_data_type(&data_type, &DataType::Byte)?;
                     self.do_read(access);
                 }
@@ -1054,7 +1013,7 @@ impl IRGenerator {
                     // also add for bool variable??
                     if let Expression::AsBool(box Expression::Access(accessor)) = expression {
 
-                        let (mem, data_type) = self.resolve_accessor(accessor)?;
+                        let (mem, data_type) = self.resolve_accessor(&accessor)?;
                         self.assert_data_type(&data_type, &DataType::Bool)?;
 
                         self.push_ir_to_stack();
@@ -1123,18 +1082,34 @@ impl IRGenerator {
                         }
                     });
                 }
-                StatementBody::Switch(expression, mut arms, default_statements) => {
+                StatementBody::Switch(expression, arms, default_statements) => {
+
+                    let mut arm_values = arms
+                        .into_iter()
+                        .map(|(arm, statements)| {
+                            Ok((match arm {
+                                MatchArm::NumberLiteral(val) => val,
+                                MatchArm::EnumVariant(enum_name, variant_name) => self.resolve_enum_variant(&enum_name, &variant_name)?
+                            }, statements))
+                        })
+                        .collect::<Result<Vec<_>, BrainFricError>>()?;
 
                     let temp_block = self.allocate_temporary_block(2);
-                    self.evaluate_byte_expression_into(expression, temp_block + 1, false)?;
 
-                    arms.sort_by(|(case1, _), (case2, _)| {
+                    let data_type = match self.try_get_expression_enum_id(&expression) {
+                        Some(enum_id) => DataType::UserEnum(enum_id),
+                        None => DataType::Byte
+                    };
+
+                    self.evaluate_expression_into(expression, &data_type, temp_block + 1)?;
+
+                    arm_values.sort_by(|(case1, _), (case2, _)| {
                         case1.cmp(case2)
                     });
 
                     self.push_ir_to_stack();
 
-                    let arm_ir_blocks: Result<Vec<(u8, IRBlock)>, BrainFricError> = arms.into_iter().map(|(case, block)| {
+                    let arm_ir_blocks: Result<Vec<(u8, IRBlock)>, BrainFricError> = arm_values.into_iter().map(|(case, block)| {
 
                         if case == 0 {
                             panic!("zero case not supported yet");
