@@ -345,7 +345,9 @@ impl IRGenerator {
     }
 
     fn do_add_const(&mut self, id: Identifier, val: u8) {
-        self.ir.0.push(IRStatement::AddConst(id, val));
+        if val != 0 {
+            self.ir.0.push(IRStatement::AddConst(id, val));
+        }
     }
 
     fn do_sub_const(&mut self, id: Identifier, val: u8) {
@@ -383,19 +385,59 @@ impl IRGenerator {
             let to_high = to_low + 1;
             let from_high = from_low + 1;
     
-            self.do_move([temp, to_low], from_low, false);
-            self.do_move([from_low], temp, negate);
-    
             self.do_move([temp, to_high], from_high, false);
             self.do_move([from_high], temp, negate);
 
+            self.do_move([temp], from_low, negate);
+            self.move_low_byte_to_short(to_low, temp, [(from_low, negate)]);
+
+            if negate {
+                self.do_sub_const(to_high, 1);
+            }
+        });
+    }
+
+    fn move_low_byte_to_short<const N: usize>(&mut self, short_id: Identifier, low_id: Identifier, copies: [(Identifier, bool); N]) {
+
+        let short_high = short_id + 1;
+
+        with_temp!(self, short_low_copy, {
+
+            do_while!(self, low_id, {
+            
+                self.do_sub_const(low_id, 1);
+                self.do_add_const(short_id, 1);
+
+                for (copy_id, negate) in copies {
+                    if negate {
+                        self.do_sub_const(copy_id, 1);
+                    }
+                    else {
+                        self.do_add_const(copy_id, 1);
+                    }
+                }
+    
+                self.do_move([short_low_copy], short_id, false);
+                
+                do_if!(self, short_low_copy, {
+                    self.do_sub_const(short_high, 1);
+                    self.do_move([short_id], short_low_copy, false);
+                });
+    
+                self.do_add_const(short_high, 1);
+    
+            });
         });
     }
 
     fn do_add_const_short(&mut self, id: Identifier, val: u16) {
-        // fix bug
-        self.do_add_const(id, (val & 0xff) as u8);
+
         self.do_add_const(id + 1, (val >> 8) as u8);
+
+        with_temp!(self, add_lower_temp, {
+            self.do_add_const(add_lower_temp, (val & 0xff) as u8);
+            self.move_low_byte_to_short(id, add_lower_temp, []);
+        });
     }
 
     fn do_sub_const_short(&mut self, id: Identifier, val: u16) {
@@ -706,84 +748,16 @@ impl IRGenerator {
                 }
             }
             Expression::Add(expr1, expr2) => {
-
-                // todo, negative case
-                assert!(!negate);
-
                 self.evaluate_short_expression_into(*expr1, into, negate)?;
-
-                let old_lower_copy = self.allocate_temporary();
-                self.do_copy(old_lower_copy, into, false);
-
                 self.evaluate_short_expression_into(*expr2, into, negate)?;
-
-                let new_lower_copy = self.allocate_temporary();
-                self.do_copy(new_lower_copy, into, false);
-
-                let temp = self.allocate_temporary();
-                let into_upper = into + 1;
-
-                do_while!(self, old_lower_copy, {
-
-                    self.do_sub_const(old_lower_copy, 1);
-                    self.do_sub_const(new_lower_copy, 1);
-    
-                    self.do_move([temp], new_lower_copy, false);
-
-                    do_if!(self, temp, {
-                        self.do_sub_const(into_upper, 1);
-                        self.do_move([new_lower_copy], temp, false);
-                    });
-    
-                    self.do_add_const(into_upper, 1);
-
-                });
-
-                self.do_clear(new_lower_copy);
-
             }
             Expression::Subtract(expr1, expr2) => {
-
-                todo!("not done yet");
-
-                // todo, negative case
-                assert!(!negate);
-
                 self.evaluate_short_expression_into(*expr1, into, negate)?;
-
-                let old_lower_copy = self.allocate_temporary();
-                self.do_copy(old_lower_copy, into, false);
-
-                self.evaluate_short_expression_into(*expr2, into, true)?;
-
-                let new_lower_copy = self.allocate_temporary();
-                self.do_copy(new_lower_copy, into, false);
-
-                let temp = self.allocate_temporary();
-                let into_upper = into + 1;
-
-                do_while!(self, new_lower_copy, {
-
-                    self.do_sub_const(old_lower_copy, 1);
-                    self.do_sub_const(new_lower_copy, 1);
-    
-                    self.do_move([temp], old_lower_copy, false);
-
-                    do_if!(self, temp, {
-                        self.do_add_const(into_upper, 1);
-                        self.do_move([old_lower_copy], temp, false);
-                    });
-    
-                    self.do_sub_const(into_upper, 1);
-
-                });
-
-                self.do_clear(old_lower_copy);
-
+                self.evaluate_short_expression_into(*expr2, into, !negate)?;
             }
             Expression::Multiply(expr1, expr2) => {
 
-                todo!()
+                todo!("bruh moment")
 
             }
             _ => err!(self.current_line_num, IRError::ExpectedTypedExpression(DataType::Short))
@@ -907,13 +881,24 @@ impl IRGenerator {
                                 self.do_clear(mem);
                                 self.do_move([mem], temp, false);
                             }),
-                            DataType::Short => todo!(),
+                            DataType::Short => with_temp!(self, lower, upper, {
+                                self.evaluate_short_expression_into(expression, lower, false)?;
+                                self.do_clear_short(mem);
+                                self.do_move([mem], lower, false);
+                                self.do_move([mem + 1], upper, false);
+                            }),
                             _ => todo!()
                         }
                     }
                     else {
-                        self.do_clear(mem);
+
+                        match data_type {
+                            DataType::Short => self.do_clear_short(mem),
+                            _ => self.do_clear(mem)
+                        }
+
                         self.evaluate_expression_into(expression, &data_type, mem)?;
+
                     }
                 }
                 StatementBody::Inc(accessor) => {
@@ -1074,7 +1059,6 @@ impl IRGenerator {
                             });
                         }
                         else {
-
                             do_if!(self, temp, {
                                 let loop_ir = self.generate_ir(loop_statements)?;
                                 self.ir.0.extend(loop_ir.0);
@@ -1092,7 +1076,7 @@ impl IRGenerator {
                                 MatchArm::EnumVariant(enum_name, variant_name) => self.resolve_enum_variant(&enum_name, &variant_name)?
                             }, statements))
                         })
-                        .collect::<Result<Vec<_>, BrainFricError>>()?;
+                        .collect::<Result<Vec<_>, _>>()?;
 
                     let temp_block = self.allocate_temporary_block(2);
 

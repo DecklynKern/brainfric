@@ -1,9 +1,4 @@
-define
-    enum Moment
-        Bruh = 100
-        NonBruh
-    end
-end
-
-var m : Moment
-m <- Moment::Bruh
+var a, b, c : short
+a <- 1000
+b <- 0
+c <- a - b
