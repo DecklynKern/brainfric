@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use std::rc::Rc;
 use std::iter::Peekable;
 use std::slice::Iter;
@@ -76,7 +75,7 @@ pub enum Specifier {
 #[derive(PartialEq, Eq, Clone)]
 pub struct Accessor {
     pub name: Name,
-    pub specifiers: Vec<Specifier>
+    pub specifiers: Box<[Specifier]>
 }
 
 impl std::fmt::Debug for Accessor {
@@ -136,7 +135,7 @@ pub enum StatementBody {
     Read(Accessor),
     While(Expression, Block),
     If(Expression, Block, Option<Block>),
-    Switch(Expression, Vec<(MatchArm, Block)>, Option<Block>)
+    Switch(Expression, Box<[(MatchArm, Block)]>, Option<Block>)
 }
 
 pub struct Statement {
@@ -294,7 +293,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_specifiers(&mut self) -> Vec<Specifier> {
+    fn parse_specifiers(&mut self) -> Box<[Specifier]> {
 
         let mut specifiers = Vec::new();
 
@@ -302,7 +301,7 @@ impl<'a> Parser<'a> {
             specifiers.push(specifier);
         }
 
-        specifiers
+        specifiers.into_boxed_slice()
 
     }
 
@@ -585,7 +584,7 @@ impl<'a> Parser<'a> {
                     err!(self.line_num, ParseError::ExpectedEnd);
                 }
 
-                StatementBody::Switch(expr, arms, default)
+                StatementBody::Switch(expr, arms.into_boxed_slice(), default)
 
             }
             Token::Identifier(name) => {

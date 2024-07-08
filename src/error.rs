@@ -1,5 +1,5 @@
 use crate::lex::Name;
-use crate::ir::DataType;
+use crate::elaborate::ElaboratedDataType;
 
 pub trait ErrorDesc {
     fn get_description(&self) -> String;
@@ -65,14 +65,55 @@ impl ErrorDesc for ParseError {
     }
 }
 
+pub enum ElaborateError {
+    UnknownIdentifier(Name),
+    UnknownType(Name),
+    UnknownEnum(Name),
+    UnknownEnumVariant(Name, Name),
+    TypeMismatch(ElaboratedDataType, ElaboratedDataType),
+    ExpectedSequence,
+    ExpectedTypedExpression(ElaboratedDataType),
+    OutOfBoundsAccess,
+    ShiftTooLarge,
+    InvalidTypeParameters
+}
+
+impl ErrorDesc for ElaborateError {
+
+    fn get_description(&self) -> String {
+        format!("IR Generation Error: {}", match self {
+            Self::UnknownIdentifier(identifier) =>
+                format!("Unknown identifier \"{identifier}\""),
+            Self::UnknownType(type_name) =>
+                format!("Unknown type \"{type_name}\""),
+            Self::UnknownEnum(enum_name) => 
+                format!("Unknown enum \"{enum_name}\""),
+            Self::UnknownEnumVariant(enum_name, variant_name) => 
+                format!("Unknown enum variant \"{enum_name}::{variant_name}\""),
+            Self::TypeMismatch(expected_type, got_type) =>  
+                format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
+            Self::ExpectedSequence =>
+                "Expected sequence".to_string(),
+            Self::ExpectedTypedExpression(expected_type) =>
+                format!("Expected {expected_type:?} expression"),
+            Self::OutOfBoundsAccess =>
+                "Out of bounds access".to_string(),
+            Self::ShiftTooLarge =>
+                "Shift is too large for sequence size".to_string(),
+            Self::InvalidTypeParameters =>
+                "Invalid type parameters".to_string()
+        })
+    }
+}
+
 pub enum IRError {
     UnknownIdentifier(Name),
     UnknownType(Name),
     UnknownEnum(Name),
     UnknownEnumVariant(Name, Name),
-    TypeMismatch(DataType, DataType),
+    TypeMismatch(ElaboratedDataType, ElaboratedDataType),
     ExpectedSequence,
-    ExpectedTypedExpression(DataType),
+    ExpectedTypedExpression(ElaboratedDataType),
     OutOfBoundsAccess,
     ShiftTooLarge,
     InvalidTypeParameters

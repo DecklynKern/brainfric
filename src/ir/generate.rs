@@ -290,15 +290,6 @@ impl IRGenerator {
 
     }
 
-    fn get_field_data(&self, data_type: &DataType, field_name: Name) -> Option<(DataType, usize)> {
-        Some(match (data_type, field_name.as_ref()) {
-            (DataType::Short, "lower") => (DataType::Byte, 0),
-            (DataType::Short, "upper") => (DataType::Byte, 1),
-            (DataType::UserStruct(struct_id), _) => return self.user_definitions.structs[*struct_id].fields.get(&field_name).cloned(),
-            _ => return None
-        })
-    }
-
     fn try_get_expression_enum_id(&self, expression: &Expression) -> Option<usize> {
         match expression {
             Expression::Access(accessor) => {
@@ -315,6 +306,32 @@ impl IRGenerator {
             Expression::EnumVariant(enum_name, _) => self.user_definitions.enum_name_table.get(enum_name).map(|enum_id| *enum_id),
             _ => None
         }
+    }
+
+    fn get_expression_type(&self, expression: &Expression) -> Result<DataType, BrainFricError> {
+        Ok(match expression {
+            Expression::Access(accessor) => {
+                self.resolve_accessor(accessor)?.1
+            }
+            Expression::Add(expr1, expr2) | 
+            Expression::Subtract(expr1, expr2) | 
+            Expression::Multiply(expr1, expr2) | 
+            Expression::Divide(expr1, expr2) => {
+
+                let type1 = self.get_expression_type(expr1)?;
+                let type2 = self.get_expression_type(expr2)?;
+
+                if type1 != type2 {
+                    err!(self.current_line_num, IRError::TypeMismatch(type1, type2));
+                }
+                else {
+                    type1
+                }
+            }
+            Expression::AsBool(_) | Expression::BoolLiteral(_) | Expression::And(_, _) | Expression::Or(_, _) | Expression::Not(_) | Expression::Equals(_, _) | Expression::NotEquals(_, _) | Expression::GreaterThan(_, _) | Expression::LessThan(_, _) | Expression::GreaterThanEqual(_, _) | Expression::LessThanEqual(_, _)
+                => DataType::Bool,
+            Expression::NumberLiteral(_) => DataType::NumberLiteral
+        })
     }
 
     fn do_move_raw<const N: usize>(&mut self, to: [(Identifier, bool); N], from: Identifier) {

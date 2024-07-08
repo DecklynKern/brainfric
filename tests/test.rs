@@ -3,7 +3,6 @@ extern crate brainfric;
 use brainfric::lex::*;
 use brainfric::parse::*;
 use brainfric::ir::*;
-use brainfric::optimize::*;
 use brainfric::lower::*;
 
 macro_rules! program {
@@ -66,7 +65,7 @@ macro_rules! tokens {
 
 macro_rules! access {
     ($name: literal) => {
-        Accessor {name: $name.into(), specifiers: Box::new([])}
+        Accessor {name: $name.into(), specifiers: Vec::new()}
     }
 }
 macro_rules! statements {
@@ -74,11 +73,11 @@ macro_rules! statements {
         vec![
             Statement {
                 line_num: 2,
-                body: StatementBody::Declaration(vec!["a".into(), "b".into(), "c".into()], DataType::Byte)
+                body: StatementBody::Declaration(vec!["a".into(), "b".into(), "c".into()], ParsedDataType)
             },
             Statement {
                 line_num: 4,
-                body: StatementBody::SetTo(
+                body: StatementBody::Assign(
                     access!("a"),
                     Expression::NumberLiteral(240)
                 )
@@ -89,7 +88,7 @@ macro_rules! statements {
             },
             Statement {
                 line_num: 7,
-                body: StatementBody::SetTo(
+                body: StatementBody::Assign(
                     access!("c"),
                     Expression::Subtract(
                         Box::new(Expression::Access(access!("a"))),
@@ -160,7 +159,7 @@ fn ir_to_lowered_check() {
     //optimize(&mut generated_ir);
 
     assert_eq!(
-        lower(generated_ir.0),
+        lower(IRBlock(generated_ir.0)),
         bf_code!()
     )
 }
