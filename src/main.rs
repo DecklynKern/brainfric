@@ -48,6 +48,14 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
 
     let elaborated_program = elaborate::elaborate(parsed_program)?;
 
+    if args::arg_show_elaborated_program() {
+        println!("=== ELABORATION PASS ===");
+        for elaborated_statement in &elaborated_program {
+            println!("{elaborated_statement:?}");
+        }
+        println!();
+    }
+
     let mut ir = ir::generate_ir(elaborated_program);
 
     if args::arg_show_ir() {

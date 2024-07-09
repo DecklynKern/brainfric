@@ -40,6 +40,7 @@ create_flags!(
     ALLOW_DELETE_VARIABLES,     "-allowdelvars",    arg_allow_delete_variables,     false,
     SHOW_LEX,                   "-showlex",         arg_show_lex,                   false,
     SHOW_PARSE,                 "-showparse",       arg_show_parse,                 false,
+    SHOW_ELABORATION,           "-showelaboration",     arg_show_elaborated_program,    false,
     SHOW_IR,                    "-showir",          arg_show_ir,                    false,
     SHOW_OPTIMIZATION_STEPS,    "-showoptsteps",    arg_show_optimization_steps,    false,
     SHOW_OPTIMIZATION,          "-showopt",         arg_show_optimization,          false,

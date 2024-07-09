@@ -25,16 +25,6 @@ struct Lowerer {
 
 impl Lowerer {
 
-    fn get_jump_raw(&self, jump_size: i32) -> Box<str> {
-        if jump_size > 0 {
-            ">"
-        }
-        else {
-            "<"
-        }
-        .repeat(jump_size.unsigned_abs() as usize).into()
-    }
-
     fn jump_diff(&mut self, from: usize, to: usize) {
         
         self.bf_code.push_str(&
@@ -137,10 +127,6 @@ impl Lowerer {
                     self.bf_code.push_str(&".>".repeat(len));
                     self.bf_code.push_str(&"<".repeat(len));
 
-                }
-                IRStatement::WriteString(id) => {
-                    self.jump_to(id);
-                    self.bf_code.push_str(">[.>]<[<]");
                 }
                 IRStatement::WriteByteAsNumber { id, temp_block } => {
                     self.interpret_named_code(

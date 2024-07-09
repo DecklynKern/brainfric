@@ -196,14 +196,11 @@ impl std::fmt::Debug for ElaboratedAccessor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BoolExpression {
 
     Access(ElaboratedAccessor),
     Constant(bool),
-
-    ByteAsBool(Box<ByteExpression>),
-    ShortAsBool(Box<ShortExpression>),
 
     ByteEquals(Box<ByteExpression>, Box<ByteExpression>),
     ByteNotEquals(Box<ByteExpression>, Box<ByteExpression>),
@@ -223,11 +220,12 @@ pub enum BoolExpression {
     And(Box<BoolExpression>, Box<BoolExpression>),
     Or(Box<BoolExpression>, Box<BoolExpression>),
 
-    ConvertByte(Box<ByteExpression>)
+    ConvertByte(Box<ByteExpression>),
+    ConvertShort(Box<ShortExpression>)
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ByteExpression {
 
     Access(ElaboratedAccessor),
@@ -244,7 +242,7 @@ pub enum ByteExpression {
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ShortExpression {
 
     Access(ElaboratedAccessor),
@@ -271,13 +269,13 @@ pub enum ElaboratedStatement {
     AssignShort(ElaboratedAccessor, ShortExpression),
     AssignString(ElaboratedAccessor, StringExpression),
     Increment(ElaboratedAccessor, u8),
-    Clear(ElaboratedAccessor),
     LeftShift(ElaboratedAccessor, u32),
     RightShift(ElaboratedAccessor, u32),
+    Clear(ElaboratedAccessor, usize),
     WriteBool(BoolExpression),
     WriteByte(ByteExpression),
     WriteShort(ShortExpression),
-    WriteByteSequence(ElaboratedAccessor), // add write string
+    WriteByteSequence(ElaboratedAccessor, usize), // add write string?
     WriteByteAsNum(ByteExpression),
     WriteConstString(Rc<str>),
     ReadByte(ElaboratedAccessor),
@@ -453,7 +451,14 @@ impl Elaborator {
                 BoolExpression::Constant(bool_value)
             }
             Expression::AsBool(expression) => {
-                todo!()
+                
+                let data_type = self.get_expression_type(&expression)?;
+                
+                match data_type {
+                    ElaboratedDataType::Byte => BoolExpression::ConvertByte(self.elaborate_byte_expression(*expression)?),
+                    ElaboratedDataType::Short => BoolExpression::ConvertShort(self.elaborate_short_expression(*expression)?),
+                    _ => todo!()
+                }
             }
             Expression::And(expr1, expr2)
                 => BoolExpression::And(
@@ -731,8 +736,12 @@ impl Elaborator {
                     elaborated_block.push(ElaboratedStatement::Increment(elaborated_accessor, 255));
 
                 }
-                StatementBody::Clear(accessor) => {
-                    elaborated_block.push(ElaboratedStatement::Clear(self.convert_accessor(accessor)?.1));
+                StatementBody::Clear(parsed_accessor) => {
+                    
+                    let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
+                    
+                    elaborated_block.push(ElaboratedStatement::Clear(accessor, data_type.get_size(&self.user_definitions)));
+
                 }
                 StatementBody::Write(expression) => {
 
@@ -741,7 +750,7 @@ impl Elaborator {
                     elaborated_block.push(match data_type {
                         ElaboratedDataType::Bool => ElaboratedStatement::WriteBool(*self.elaborate_bool_expression(expression)?),
                         ElaboratedDataType::Byte => ElaboratedStatement::WriteByte(*self.elaborate_byte_expression(expression)?),
-                        ElaboratedDataType::Sequence(box ElaboratedDataType::Byte, _) => ElaboratedStatement::WriteByteSequence(todo!()),
+                        ElaboratedDataType::Sequence(box ElaboratedDataType::Byte, _) => ElaboratedStatement::WriteByteSequence(todo!(), todo!()),
                         _ => {
 
                             // make better at some point
@@ -762,7 +771,7 @@ impl Elaborator {
 
                 }
                 StatementBody::WriteLine => {
-                    elaborated_block.push(ElaboratedStatement::WriteByte(ByteExpression::Constant(20)))
+                    elaborated_block.push(ElaboratedStatement::WriteByte(ByteExpression::Constant(10)))
                 }
                 StatementBody::Read(parsed_accessor) => {
 
@@ -796,8 +805,9 @@ impl Elaborator {
 
                     let data_type = self.get_expression_type(&expression)?;
 
+                    // fix when rust 0.80 comes out
                     let mut arms_vec = Vec::new();
-                    for (arm, block) in parsed_arms {
+                    for (arm, block) in Vec::from(parsed_arms).into_iter() {
 
                         arms_vec.push((
                             match arm {

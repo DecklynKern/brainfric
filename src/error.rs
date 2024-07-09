@@ -38,7 +38,6 @@ pub enum ParseError {
     ExpectedName,
     ExpectedEnd,
     ExpectedNewline,
-    StringLiteralTooLarge,
     MultipleDefaultArms
 }
 
@@ -59,7 +58,6 @@ impl ErrorDesc for ParseError {
             Self::ExpectedName => "Expected name",
             Self::ExpectedEnd => "Expected end statement to block",
             Self::ExpectedNewline => "Expected new line",
-            Self::StringLiteralTooLarge => "String literal too large for declared sequence",
             Self::MultipleDefaultArms => "Multiple default arms"
         })
     }

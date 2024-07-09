@@ -152,14 +152,6 @@ impl IRGenerator {
         }
     }
 
-    fn try_free_access(&mut self, mem: Identifier, is_temp: bool) {
-        if is_temp {
-            let id = mem;
-            self.do_clear_byte(id);
-            self.ir.0.push(IRStatement::Free(id));
-        }
-    }
-
     fn allocate_temporary(&mut self) -> Identifier {
         self.allocate_temporary_block(1)
     }
@@ -252,6 +244,12 @@ impl IRGenerator {
             self.do_add_const(temp, (chr as u8).wrapping_sub(val));
             self.do_write_byte(temp);
             val = chr as u8;
+        }
+    }
+
+    fn do_write_byte_sequence(&mut self, id: Identifier, length: usize) {
+        for i in 0..length {
+            self.do_write_byte(id + i);
         }
     }
 
@@ -360,7 +358,7 @@ impl IRGenerator {
             BoolExpression::Constant(value) => {
                 self.do_add_const(into, value as u8);
             }
-            BoolExpression::ByteAsBool(expr) => {
+            BoolExpression::ConvertByte(expr) => {
 
                 with_temp!(self, temp, {
 
@@ -660,25 +658,19 @@ impl IRGenerator {
                     let id = self.resolve_accessor(accessor);
                     self.do_add_const(id, value);
                 }
-                ElaboratedStatement::Clear(accessor) => {
-
-                    let (mem, data_type) = self.resolve_accessor(accessor);
-
-                    if !matches!(data_type, DataType::Sequence(_, _)) {
-                        err!(self.current_line_num, IRError::ExpectedSequence);
-                    }
-                    
-                    // make more sophisticated
-
-                    for cell in 0..data_type.get_size(&self.user_definitions) {
-                        self.do_clear_byte(mem + cell);
-                    }
-                }
                 ElaboratedStatement::LeftShift(accessor, amount) => {
                     todo!()
                 }
                 ElaboratedStatement::RightShift(accessor, amount) => {
                     todo!()
+                }
+                ElaboratedStatement::Clear(accessor, size) => {
+                    
+                    let id = self.resolve_accessor(accessor);
+
+                    for i in 0..size {
+                        self.do_clear_byte(id + i);
+                    }
                 }
                 ElaboratedStatement::WriteBool(expression) => {
 
@@ -711,51 +703,21 @@ impl IRGenerator {
                         self.do_write_byte(temp);
                     });
                 }
+                ElaboratedStatement::WriteShort(expression) => {
+                    todo!()
+                }
                 ElaboratedStatement::WriteByteAsNum(expression) => {
                     with_temp!(self, temp, {
                         self.evaluate_byte_expression_into(expression, temp, false);
                         self.do_write_byte_as_number(temp);
                     });
                 }
-                ElaboratedStatement::WriteByteSequence(accessor) => {
-
+                ElaboratedStatement::WriteByteSequence(accessor, length) => {
                     let id = self.resolve_accessor(accessor);
-
+                    self.do_write_byte_sequence(id, length);
                 }
-
-                ElaboratedStatement::Write(expression) => {
-
-                    if let Expression::StringLiteral(literal) = expression {
-
-                        with_temp!(self, temp, {
-
-                            let mut val = 0u8;
-    
-                            for chr in literal.chars() {
-                                self.do_add_const(temp, (chr as u8).wrapping_sub(val));
-                                self.do_write_byte(temp);
-                                val = chr as u8;
-                            }
-                        });
-                        
-                        continue;
-                    
-                    }
-                    
-                    if let Expression::Access(access) = &expression {
-
-                        let (mem, data_type) = self.resolve_accessor(&access.clone());
-
-                        if let DataType::Sequence(box DataType::Byte, len) = data_type {
-                            self.do_write_byte_seq(mem, len);
-                            continue;
-                        }
-                    }
-
-                    let (mem, is_temp) = self.evaluate_expression(expression, &DataType::Byte);
-                    self.do_write_byte(mem);
-                    self.try_free_access(mem, is_temp);
-
+                ElaboratedStatement::WriteConstString(string) => {
+                    self.do_write_string(&string);
                 }
                 ElaboratedStatement::ReadByte(accessor) => {
                     let id = self.resolve_accessor(accessor);
@@ -765,7 +727,7 @@ impl IRGenerator {
 
                     // optimization for special case
                     // also add for bool variable
-                    if let BoolExpression::ByteAsBool(box ByteExpression::Access(accessor)) = expression {
+                    if let BoolExpression::ConvertByte(box ByteExpression::Access(accessor)) = expression {
 
                         let id = self.resolve_accessor(accessor);
 
@@ -781,7 +743,7 @@ impl IRGenerator {
 
                         with_temp!(self, temp, {
 
-                            self.evaluate_bool_expression_into(expression, temp);
+                            self.evaluate_bool_expression_into(expression.clone(), temp);
         
                             do_while!(self, temp, {
             
@@ -843,14 +805,14 @@ impl IRGenerator {
                     self.push_ir_to_stack();
 
                     // add into_iter when rust 0.80 comes out
-                    let arm_ir_blocks: Vec<(u8, IRBlock)> = arms.iter().map(|(case, block)| {
+                    let arm_ir_blocks: Vec<(u8, IRBlock)> = Vec::from(arms).into_iter().map(|(case, block)| {
 
-                        if *case == 0 {
+                        if case == 0 {
                             panic!("zero case not supported yet");
                         }
 
-                        let ir = self.generate_ir(*block);
-                        (*case, ir)
+                        let ir = self.generate_ir(block);
+                        (case, ir)
                         
                     }).collect();
 
