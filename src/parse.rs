@@ -31,7 +31,6 @@ pub enum DataTypeHead {
     Byte,
     Short,
     Sequence,
-    String,
     Stack,
     UserDefined(Name)
 }
@@ -116,7 +115,7 @@ pub enum Expression {
     Divide(Box<Expression>, Box<Expression>),
 
     AsBool(Box<Expression>),
-    AsNum(Box<Expression>)
+    AsByte(Box<Expression>)
 
 }
 
@@ -130,7 +129,7 @@ pub enum StatementBody {
     LeftShift(Accessor, u32),
     RightShift(Accessor, u32),
     Write(Expression),
-    WriteNum(Expression),
+    WriteAsNum(Expression),
     WriteLine,
     Read(Accessor),
     While(Expression, Block),
@@ -234,7 +233,6 @@ impl<'a> Parser<'a> {
             Token::Byte => DataTypeHead::Byte,
             Token::Short => DataTypeHead::Short,
             Token::Sequence => DataTypeHead::Sequence,
-            Token::String => DataTypeHead::String,
             Token::Stack => todo!(),
             Token::Array => todo!(),
             Token::Identifier(name) => DataTypeHead::UserDefined(name.clone()),
@@ -420,7 +418,7 @@ impl<'a> Parser<'a> {
 
             Ok(match op {
                 Token::Question => Expression::AsBool,
-                Token::Pound => Expression::AsNum,
+                Token::Pound => Expression::AsByte,
                 Token::Exclamation => Expression::Not,
                 _ => unreachable!()
             }(Box::new(factor)))
@@ -629,7 +627,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Write => StatementBody::Write(self.parse_expression()?),
-            Token::WriteNum => StatementBody::WriteNum(self.parse_expression()?),
+            Token::WriteNum => StatementBody::WriteAsNum(self.parse_expression()?),
             Token::WriteLine => StatementBody::WriteLine,
             _ => err!(self.line_num, ParseError::InvalidStatement)
         };

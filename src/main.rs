@@ -13,10 +13,10 @@ mod error;
 mod lex;
 mod parse;
 mod elaborate;
-//mod ir;
-//mod optimize;
-//mod lower;
-//mod clean;
+mod ir;
+mod optimize;
+mod lower;
+mod clean;
 
 fn compile(code: &str) -> Result<String, BrainFricError> {
 
@@ -48,15 +48,15 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
 
     let elaborated_program = elaborate::elaborate(parsed_program)?;
 
-    // let mut ir = ir::generate_ir(elaborated_program)?;
+    let mut ir = ir::generate_ir(elaborated_program);
 
-    // if args::arg_show_ir() {
-    //     println!("=== IR PASS ===");
-    //     for ir_statement in &ir.0 {
-    //         println!("{ir_statement:?}");
-    //     }
-    //     println!();
-    // }
+    if args::arg_show_ir() {
+        println!("=== IR PASS ===");
+        for ir_statement in &ir.0 {
+            println!("{ir_statement:?}");
+        }
+        println!();
+    }
 
     // if args::arg_do_optimization() {
    
@@ -78,23 +78,21 @@ fn compile(code: &str) -> Result<String, BrainFricError> {
     //     }
     // }
 
-    // let mut bf_code = lower::lower(ir);
+    let mut bf_code = lower::lower(ir);
 
-    // if args::arg_show_lowered() {
-    //     println!("=== LOWERING PASS ===");
-    //     println!("{bf_code}\n");
-    // }
+    if args::arg_show_lowered() {
+        println!("=== LOWERING PASS ===");
+        println!("{bf_code}\n");
+    }
 
-    // clean::clean(&mut bf_code);
+    clean::clean(&mut bf_code);
 
-    // if args::arg_show_cleaned() {
-    //     println!("=== CLEANING PASS ===");
-    //     println!("{bf_code}\n");
-    // }
+    if args::arg_show_cleaned() {
+        println!("=== CLEANING PASS ===");
+        println!("{bf_code}\n");
+    }
 
-    // Ok(bf_code)
-
-    Ok(String::from(""))
+    Ok(bf_code)
 
 }
 
