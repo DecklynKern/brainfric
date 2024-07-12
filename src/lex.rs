@@ -171,7 +171,8 @@ impl Token {
     pub fn is_specifier_head(&self) -> bool {
         matches!(self,
             Self::At |
-            Self::Dot
+            Self::Dot |
+            Self::Exclamation
         )
     }
 
@@ -208,6 +209,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
             chars.next();
 
             line_num += 1;
+            set_line_num(line_num);
             continue;
 
         }
@@ -233,7 +235,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
             
             }
             Ok(None) => {}
-            Err(()) => err!(line_num, LexError::InvalidSymbol)
+            Err(()) => err!(LexError::InvalidSymbol)
         }
         
         if let Some(num) = try_lex_number_literal(&mut chars) {
@@ -247,7 +249,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
                 continue;
             }
             Ok(None) => {}
-            Err(()) => err!(line_num, LexError::InvalidCharLiteral)
+            Err(()) => err!(LexError::InvalidCharLiteral)
         }
 
         match try_lex_string_literal(&mut chars) {
@@ -256,10 +258,10 @@ pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
                 continue;
             }
             Ok(None) => {}
-            Err(()) => err!(line_num, LexError::InvalidStringLiteral)
+            Err(()) => err!(LexError::InvalidStringLiteral)
         }
         
-        err!(line_num, LexError::InvalidToken);
+        err!(LexError::InvalidToken);
 
     }
 

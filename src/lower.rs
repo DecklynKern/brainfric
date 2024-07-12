@@ -25,6 +25,14 @@ struct Lowerer {
 
 impl Lowerer {
 
+    fn jump_left(&mut self, jump: usize) {
+        self.bf_code.push_str(&"<".repeat(jump));
+    }
+
+    fn jump_right(&mut self, jump: usize) {
+        self.bf_code.push_str(&">".repeat(jump));
+    }
+
     fn jump_diff(&mut self, from: usize, to: usize) {
         
         self.bf_code.push_str(&
@@ -63,6 +71,18 @@ impl Lowerer {
                 _ => self.bf_code.push(char)
             }
         }
+    }
+
+    fn stack_traverse_in(&mut self, cell_size: usize) {
+        self.bf_code.push('[');
+        self.jump_right(cell_size);
+        self.bf_code.push(']');
+    }
+
+    fn stack_traverse_out(&mut self, cell_size: usize) {
+        self.bf_code.push('[');
+        self.jump_left(cell_size);
+        self.bf_code.push(']');
     }
 
     fn lower_statements(&mut self, ir: IRBlock) {
@@ -182,6 +202,71 @@ impl Lowerer {
                     }
 
                     self.bf_code.push('<');
+
+                }
+                IRStatement::StackPush(id, size) => {
+
+                    let cell_size = size + 1;
+
+                    self.jump_to(id);
+
+                    for offset in 0..size {
+
+                        self.bf_code.push_str(">[-");
+                        self.jump_right(size - offset);
+
+                        self.stack_traverse_in(cell_size);
+
+                        self.jump_right(offset + 1);
+                        self.bf_code.push('+');
+                        self.jump_left(cell_size + offset + 1);
+
+                        self.stack_traverse_out(cell_size);
+
+                        self.jump_right(offset + 1);
+                        self.bf_code.push(']');
+
+                    }
+
+                    self.bf_code.push('>');
+
+                    self.stack_traverse_in(cell_size);
+                    self.bf_code.push('+');
+                    self.stack_traverse_out(cell_size);
+
+                }
+                IRStatement::StackPop(id, size) => {
+
+                    let cell_size = size + 1;
+
+                    self.jump_to(id);
+                    self.jump_right(cell_size);
+
+                    self.stack_traverse_in(cell_size);
+
+                    for offset in 0..size {
+
+                        self.jump_left(size - offset);
+                        self.bf_code.push_str("[-");
+                        self.jump_left(offset + 1);
+                        self.stack_traverse_out(cell_size);
+
+                        self.jump_right(offset + 1);
+                        self.bf_code.push('+');
+                        self.jump_right(cell_size - offset + 1);
+
+                        self.stack_traverse_in(cell_size);
+
+                        self.jump_left(size - offset);
+                        self.bf_code.push(']');
+
+                    }
+
+                    self.jump_left(size);
+                    self.bf_code.push('-');
+                    self.jump_left(cell_size);
+
+                    self.stack_traverse_out(cell_size);
 
                 }
             }

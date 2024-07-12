@@ -1,5 +1,15 @@
+use std::rc::Rc;
+
 use crate::lex::Name;
 use crate::elaborate::ElaboratedDataType;
+
+static mut CURRENT_LINE_NUM: usize = 0;
+
+pub fn set_line_num(line_num: usize) {
+    unsafe {
+        CURRENT_LINE_NUM = line_num;
+    }
+}
 
 pub trait ErrorDesc {
     fn get_description(&self) -> String;
@@ -68,7 +78,9 @@ pub enum ElaborateError {
     UnknownType(Name),
     UnknownEnum(Name),
     UnknownEnumVariant(Name, Name),
+    StringLiteralTooLarge(Rc<str>, usize),
     TypeMismatch(ElaboratedDataType, ElaboratedDataType),
+    NestedComplexType,
     ExpectedSequence,
     ExpectedTypedExpression(ElaboratedDataType),
     OutOfBoundsAccess,
@@ -79,7 +91,7 @@ pub enum ElaborateError {
 impl ErrorDesc for ElaborateError {
 
     fn get_description(&self) -> String {
-        format!("IR Generation Error: {}", match self {
+        format!("Elaboration Generation Error: {}", match self {
             Self::UnknownIdentifier(identifier) =>
                 format!("Unknown identifier \"{identifier}\""),
             Self::UnknownType(type_name) =>
@@ -88,8 +100,12 @@ impl ErrorDesc for ElaborateError {
                 format!("Unknown enum \"{enum_name}\""),
             Self::UnknownEnumVariant(enum_name, variant_name) => 
                 format!("Unknown enum variant \"{enum_name}::{variant_name}\""),
+            Self::StringLiteralTooLarge(literal, max_size) =>
+                format!("String literal too large \"{literal}\", max size: {max_size}"),
             Self::TypeMismatch(expected_type, got_type) =>  
                 format!("Type mismatch. Expected {expected_type:?}, got {got_type:?}"),
+            Self::NestedComplexType =>
+                "Nested complex types are currently unsupported".to_string(),
             Self::ExpectedSequence =>
                 "Expected sequence".to_string(),
             Self::ExpectedTypedExpression(expected_type) =>
@@ -110,6 +126,13 @@ pub struct BrainFricError {
 }
 
 impl BrainFricError {
+
+    pub fn new(error: Box<dyn ErrorDesc>) -> Self {
+        Self {
+            line: unsafe {CURRENT_LINE_NUM},
+            error
+        }
+    }
     
     pub fn print(&self) {
 
@@ -128,10 +151,7 @@ pub type MaybeBFErr<Type> = Result<Type, BrainFricError>;
 
 #[macro_export]
 macro_rules! err {
-    ($line_num: expr, $error: expr) => {
-        return Err(BrainFricError {
-            line: $line_num,
-            error: Box::new($error)
-        })
+    ($error: expr) => {
+        return Err(BrainFricError::new(Box::new($error)))
     }
 }

@@ -68,7 +68,8 @@ impl Default for ParsedDataType {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Specifier {
     ConstIndex(u32),
-    Field(Name)
+    Field(Name),
+    StackPop
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -176,6 +177,7 @@ impl<'a> Parser<'a> {
                     self.tokens.next();
 
                     self.line_num += 1;
+                    set_line_num(self.line_num);
                     found_newline = true;
 
                 }
@@ -187,7 +189,7 @@ impl<'a> Parser<'a> {
             Ok(())
         }
         else {
-            err!(self.line_num, ParseError::ExpectedNewline);
+            err!(ParseError::ExpectedNewline);
         }
     }
 
@@ -209,7 +211,7 @@ impl<'a> Parser<'a> {
 
         let Some(token) = self.tokens.peek()
         else {
-            err!(self.line_num, ParseError::InvalidType);
+            err!(ParseError::InvalidType);
         };
 
         if let Token::NumberLiteral(num) = token {
@@ -225,7 +227,7 @@ impl<'a> Parser<'a> {
 
         let Some(token) = self.tokens.peek()
         else {
-            err!(self.line_num, ParseError::InvalidType);
+            err!(ParseError::InvalidType);
         };
 
         let head = match token {
@@ -233,16 +235,20 @@ impl<'a> Parser<'a> {
             Token::Byte => DataTypeHead::Byte,
             Token::Short => DataTypeHead::Short,
             Token::Sequence => DataTypeHead::Sequence,
-            Token::Stack => todo!(),
+            Token::Stack => DataTypeHead::Stack,
             Token::Array => todo!(),
             Token::Identifier(name) => DataTypeHead::UserDefined(name.clone()),
-            _ => err!(self.line_num, ParseError::InvalidType)
+            _ => err!(ParseError::InvalidType)
         };
 
         let mut data_type = ParsedDataType {
             head,
             parameters: Vec::new()
         };
+
+        if let DataTypeHead::UserDefined(_) = data_type.head {
+            return Ok(data_type);
+        }
 
         self.tokens.next();
 
@@ -257,7 +263,7 @@ impl<'a> Parser<'a> {
                 }
 
                 if !first_param && !self.try_take_token(Token::Comma) {
-                    err!(self.line_num, ParseError::InvalidType);
+                    err!(ParseError::InvalidType);
                 }
 
                 data_type.parameters.push(self.parse_data_type_parameter()?);
@@ -283,6 +289,7 @@ impl<'a> Parser<'a> {
                     Some(Token::Identifier(ident)) => Specifier::Field(ident.clone()),
                     _ => return None
                 }
+                Token::Exclamation => Specifier::StackPop,
                 _ => unreachable!()
             })
         }
@@ -307,7 +314,7 @@ impl<'a> Parser<'a> {
 
         let Some(Token::Identifier(name)) = self.tokens.next()
         else {
-            err!(self.line_num, ParseError::InvalidExpression);
+            err!(ParseError::InvalidExpression);
         };
 
         Ok(Accessor {
@@ -363,7 +370,7 @@ impl<'a> Parser<'a> {
 
         let Some(token) = self.tokens.next()
         else {
-            err!(self.line_num, ParseError::InvalidExpression);
+            err!(ParseError::InvalidExpression);
         };
 
         Ok(match token {
@@ -372,7 +379,7 @@ impl<'a> Parser<'a> {
                 let expression = self.parse_expression()?;
 
                 if !self.try_take_token(Token::CloseParen) {
-                    err!(self.line_num, ParseError::ExpectedCloseParen);
+                    err!(ParseError::ExpectedCloseParen);
                 }
 
                 expression
@@ -387,7 +394,7 @@ impl<'a> Parser<'a> {
                 if self.try_take_token(Token::DoubleColon) {
 
                     let Some(Token::Identifier(enum_variant)) = self.tokens.next() else {
-                        err!(self.line_num, ParseError::ExpectedName);
+                        err!(ParseError::ExpectedName);
                     };
 
                     Expression::EnumVariant(name.clone(), enum_variant.clone())
@@ -400,7 +407,7 @@ impl<'a> Parser<'a> {
                     })
                 }
             }
-            _ => err!(self.line_num, ParseError::InvalidExpression)
+            _ => err!(ParseError::InvalidExpression)
         })
     }
 
@@ -408,7 +415,7 @@ impl<'a> Parser<'a> {
 
         let Some(token) = self.tokens.peek()
         else {
-            err!(self.line_num, ParseError::InvalidExpression);
+            err!(ParseError::InvalidExpression);
         };
 
         if token.is_unary_operator() {
@@ -482,7 +489,7 @@ impl<'a> Parser<'a> {
                 
                 let Some(Token::Identifier(name1)) = self.tokens.next()
                 else {
-                    err!(self.line_num, ParseError::InvalidStatement);
+                    err!(ParseError::InvalidStatement);
                 };
 
                 let mut names = vec![name1.clone()];
@@ -491,7 +498,7 @@ impl<'a> Parser<'a> {
                     
                     let Some(Token::Identifier(name)) = self.tokens.next()
                     else {
-                        err!(self.line_num, ParseError::InvalidStatement)
+                        err!(ParseError::InvalidStatement)
                     };
 
                     names.push(name.clone());
@@ -550,7 +557,7 @@ impl<'a> Parser<'a> {
                     if self.try_take_token(Token::Default) {
 
                         if default.is_some() {
-                            err!(self.line_num, ParseError::MultipleDefaultArms);
+                            err!(ParseError::MultipleDefaultArms);
                         }
 
                         self.expect_newline()?;
@@ -567,7 +574,7 @@ impl<'a> Parser<'a> {
                     let arm = match self.parse_factor()? {
                         Expression::NumberLiteral(num) => MatchArm::NumberLiteral(num as u8),
                         Expression::EnumVariant(enum_name, variant_name) => MatchArm::EnumVariant(enum_name, variant_name),
-                        _ => err!(self.line_num, ParseError::ExpectedMatchArm)
+                        _ => err!(ParseError::ExpectedMatchArm)
                     };
 
                     self.expect_newline()?;
@@ -579,7 +586,7 @@ impl<'a> Parser<'a> {
                 }
 
                 if !self.try_take_token(Token::End) {
-                    err!(self.line_num, ParseError::ExpectedEnd);
+                    err!(ParseError::ExpectedEnd);
                 }
 
                 StatementBody::Switch(expr, arms.into_boxed_slice(), default)
@@ -605,16 +612,16 @@ impl<'a> Parser<'a> {
             Token::LeftShift | Token::RightShift => {
                 
                 if !self.try_take_token(Token::OpenAngle) {
-                    err!(self.line_num, ParseError::ExpectedOpenAngle);
+                    err!(ParseError::ExpectedOpenAngle);
                 }
                 
                 let Some(Token::NumberLiteral(offset)) = self.tokens.next()
                 else {
-                    err!(self.line_num, ParseError::ExpectedNumberLiteral);
+                    err!(ParseError::ExpectedNumberLiteral);
                 };
                 
                 if !self.try_take_token(Token::CloseAngle) {
-                    err!(self.line_num, ParseError::ExpectedCloseAngle);
+                    err!(ParseError::ExpectedCloseAngle);
                 }
                 
                 let accessor = self.parse_accessor()?;
@@ -629,7 +636,7 @@ impl<'a> Parser<'a> {
             Token::Write => StatementBody::Write(self.parse_expression()?),
             Token::WriteNum => StatementBody::WriteAsNum(self.parse_expression()?),
             Token::WriteLine => StatementBody::WriteLine,
-            _ => err!(self.line_num, ParseError::InvalidStatement)
+            _ => err!(ParseError::InvalidStatement)
         };
         
         Ok(Statement {
@@ -675,7 +682,7 @@ impl<'a> Parser<'a> {
             Token::Enum => {
 
                 let Some(Token::Identifier(name)) = self.tokens.next() else {
-                    err!(self.line_num, ParseError::ExpectedName);
+                    err!(ParseError::ExpectedName);
                 };
 
                 self.expect_newline()?;
@@ -691,7 +698,7 @@ impl<'a> Parser<'a> {
                             let value = if self.try_take_token(Token::Equal) {
 
                                 let Some(Token::NumberLiteral(val)) = self.tokens.next() else {
-                                    err!(self.line_num, ParseError::InvalidDefinition);
+                                    err!(ParseError::InvalidDefinition);
                                 };
 
                                 *val as u8
@@ -706,7 +713,7 @@ impl<'a> Parser<'a> {
                             variants.push((variant_name.clone(), value))
 
                         }
-                        _ => err!(self.line_num, ParseError::InvalidDefinition)
+                        _ => err!(ParseError::InvalidDefinition)
                     }
 
                     self.expect_newline()?;
@@ -719,7 +726,7 @@ impl<'a> Parser<'a> {
             Token::Struct => {
 
                 let Some(Token::Identifier(name)) = self.tokens.next() else {
-                    err!(self.line_num, ParseError::ExpectedName);
+                    err!(ParseError::ExpectedName);
                 };
 
                 self.expect_newline()?;
@@ -741,7 +748,7 @@ impl<'a> Parser<'a> {
                             fields.push((field_name.clone(), data_type));
 
                         }
-                        _ => err!(self.line_num, ParseError::InvalidDefinition)
+                        _ => err!(ParseError::InvalidDefinition)
                     }
 
                     self.expect_newline()?;
@@ -751,7 +758,7 @@ impl<'a> Parser<'a> {
                 Definition::Struct(name.clone(), fields)
 
             }
-            _ => err!(self.line_num, ParseError::InvalidDefinition)
+            _ => err!(ParseError::InvalidDefinition)
         })
     }
 

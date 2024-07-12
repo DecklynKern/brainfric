@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::mem::{take, swap};
 
 use crate::lex::Name;
 use crate::parse::*;
@@ -54,7 +55,7 @@ impl UserDefinitions {
 
                     for (field_name, parsed_data_type) in fields {
                         
-                        let data_type = ElaboratedDataType::convert_parsed(&parsed_data_type, usize::MAX, &user_definitions)?;
+                        let data_type = ElaboratedDataType::convert_parsed(&parsed_data_type, &user_definitions)?;
                     
                         let size = data_type.get_size(&user_definitions);
                         user_struct_fields.insert(field_name, (data_type, offset));
@@ -94,6 +95,7 @@ impl ElaboratedDataType {
 
     fn can_conflate(&self, other: &Self) -> bool {
 
+        self == other ||
         matches!(
             (self, other),
             (Self::GenericNumber, Self::Byte | Self::Short) |
@@ -122,15 +124,25 @@ impl ElaboratedDataType {
             Self::Byte => 1,
             Self::Short => 2,
             Self::Sequence(data_type, len) => len * data_type.get_size(user_definitions),
-            Self::Stack(data_type, len) => len * (data_type.get_size(user_definitions) + 1) + 1,
+            Self::Stack(data_type, len) => (len + 1) * (data_type.get_size(user_definitions) + 1) + 1,
             Self::UserEnum(_) => 1,
             Self::UserStruct(struct_id) => user_definitions.structs[*struct_id].size,
             //Self::Array(data_type, len) => data_type.get_size() * len
             Self::GenericNumber | Self::GenericString => unreachable!()
         }
     }
+
+    fn convert_parsed_simple(parsed_data_type: &ParsedDataType, user_definitions: &UserDefinitions) -> Result<Self, BrainFricError> {
+
+        if !parsed_data_type.parameters.is_empty() {
+            err!(ElaborateError::NestedComplexType);
+        }
+
+        Self::convert_parsed(parsed_data_type, user_definitions)
+
+    }
     
-    fn convert_parsed(parsed_data_type: &ParsedDataType, line_num: usize, user_definitions: &UserDefinitions) -> Result<Self, BrainFricError> {
+    fn convert_parsed(parsed_data_type: &ParsedDataType, user_definitions: &UserDefinitions) -> Result<Self, BrainFricError> {
 
         let params = &parsed_data_type.parameters;
 
@@ -144,12 +156,12 @@ impl ElaboratedDataType {
         };
 
         if expected_types.len() != params.len() {
-            err!(line_num, ElaborateError::InvalidTypeParameters);
+            err!(ElaborateError::InvalidTypeParameters);
         }
 
         for idx in 0..expected_types.len() {
             if expected_types[idx] != params[idx].get_type_val() {
-                err!(line_num, ElaborateError::InvalidTypeParameters);
+                err!(ElaborateError::InvalidTypeParameters);
             }
         }
 
@@ -158,11 +170,11 @@ impl ElaboratedDataType {
             DataTypeHead::Byte => Self::Byte,
             DataTypeHead::Short => Self::Short,
             DataTypeHead::Sequence => Self::Sequence(
-                Box::new(Self::convert_parsed(Self::get_subtype(&params[0]), line_num, user_definitions)?),
+                Box::new(Self::convert_parsed_simple(Self::get_subtype(&params[0]), user_definitions)?),
                 Self::get_constant_val(&params[1])
             ),
             DataTypeHead::Stack => Self::Stack(
-                Box::new(Self::convert_parsed(Self::get_subtype(&params[0]), line_num, user_definitions)?),
+                Box::new(Self::convert_parsed_simple(Self::get_subtype(&params[0]), user_definitions)?),
                 Self::get_constant_val(&params[1])
             ),
             DataTypeHead::UserDefined(name) => {
@@ -171,7 +183,7 @@ impl ElaboratedDataType {
                     Some(enum_id) => Self::UserEnum(*enum_id),
                     None => match user_definitions.struct_name_table.get(name) {
                         Some(struct_id) => Self::UserStruct(*struct_id),
-                        None => err!(line_num, ElaborateError::UnknownType(name.clone()))
+                        None => err!(ElaborateError::UnknownType(name.clone()))
                     }
                 }
             }
@@ -187,12 +199,12 @@ pub enum ElaboratedSpecifier {
 #[derive(PartialEq, Eq, Clone)]
 pub struct ElaboratedAccessor {
     pub name_id: NameID,
-    pub specifiers: Box<[ElaboratedSpecifier]>
+    pub specifiers: Vec<ElaboratedSpecifier>
 }
 
 impl std::fmt::Debug for ElaboratedAccessor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Accessor(\"{}\", {:?})", self.name_id, self.specifiers)
+        write!(f, "ElaboratedAccessor({}, {:?})", self.name_id, self.specifiers)
     }
 }
 
@@ -257,7 +269,6 @@ pub enum ShortExpression {
 
 #[derive(Debug)]
 pub enum StringExpression {
-    Access(ElaboratedAccessor),
     Constant(Rc<str>)
 }
 
@@ -281,7 +292,10 @@ pub enum ElaboratedStatement {
     ReadByte(ElaboratedAccessor),
     While(BoolExpression, ElaboratedBlock),
     If(BoolExpression, ElaboratedBlock, Option<ElaboratedBlock>),
-    Switch(ByteExpression, Box<[(u8, ElaboratedBlock)]>, Option<ElaboratedBlock>)
+    Switch(ByteExpression, Box<[(u8, ElaboratedBlock)]>, Option<ElaboratedBlock>),
+    // need to make this horrible mess better
+    StackPush(NameID, usize),
+    StackPop(NameID, usize)
 }
 
 pub type ElaboratedBlock = Vec<ElaboratedStatement>;
@@ -289,11 +303,15 @@ pub type ElaboratedBlock = Vec<ElaboratedStatement>;
 struct Elaborator {
     user_definitions: UserDefinitions,
     name_table: HashMap<Name, (NameID, ElaboratedDataType)>,
-    current_line_num: usize,
+    current_block: ElaboratedBlock,
     next_name_id: NameID
 }
 
 impl Elaborator {
+
+    fn get_type_size(&self, data_type: &ElaboratedDataType) -> usize {
+        data_type.get_size(&self.user_definitions)
+    }
 
     fn get_field_data(&self, data_type: &ElaboratedDataType, field_name: Name) -> Option<(ElaboratedDataType, usize)> {
         Some(match (data_type, field_name.as_ref()) {
@@ -308,28 +326,27 @@ impl Elaborator {
 
         let Some(&enum_id) = self.user_definitions.enum_name_table.get(&enum_name)
         else {
-            err!(self.current_line_num, ElaborateError::UnknownEnum(enum_name));
+            err!(ElaborateError::UnknownEnum(enum_name));
         };
     
         let Some(&variant_value) = self.user_definitions.enums[enum_id].0.get(&variant_name)
         else {
-            err!(self.current_line_num, ElaborateError::UnknownEnumVariant(enum_name, variant_name));
+            err!(ElaborateError::UnknownEnumVariant(enum_name, variant_name));
         };
 
         Ok(variant_value)
         
     }
 
-    fn convert_accessor(&self, accessor: Accessor) -> Result<(ElaboratedDataType, ElaboratedAccessor), BrainFricError> {
+    // bad code duplication 
+    fn get_accessor_type(&self, accessor: &Accessor) -> Result<ElaboratedDataType, BrainFricError> {
 
-        let (&name_id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
+        let mut data_type = self.name_table.get(accessor.name.as_ref()).map_or_else(
             ||
-                err!(self.current_line_num, ElaborateError::UnknownIdentifier(accessor.name.clone())),
-            |(id, data_type)|
-                Ok((id, data_type.clone()))
+                err!(ElaborateError::UnknownIdentifier(accessor.name.clone())),
+            |(_, data_type)|
+                Ok(data_type.clone())
         )?;
-
-        let mut offset = 0;
 
         for specifier in accessor.specifiers.iter() {
             
@@ -337,10 +354,54 @@ impl Elaborator {
                 (ElaboratedDataType::Sequence(inner_type, len), Specifier::ConstIndex(idx)) => {
 
                     if *idx as usize >= len {
-                        err!(self.current_line_num, ElaborateError::OutOfBoundsAccess);
+                        err!(ElaborateError::OutOfBoundsAccess);
                     }
 
-                    offset += *idx as usize * inner_type.get_size(&self.user_definitions);
+                    data_type = *inner_type;
+                    
+                }
+                (data_type_again, Specifier::Field(field_name)) => {
+
+                    let Some((new_data_type, field_offset)) = self.get_field_data(&data_type_again, field_name.clone())
+                    else {
+                        todo!("bad access");
+                    };
+
+                    data_type = new_data_type;
+                
+                }
+                (ElaboratedDataType::Stack(inner_type, _), Specifier::StackPop) => {
+                    data_type = *inner_type;
+                }
+                _ => todo!("bad access")
+            }
+        }
+
+        Ok(data_type)
+
+    }
+
+    fn convert_accessor(&mut self, accessor: Accessor) -> Result<(ElaboratedDataType, ElaboratedAccessor), BrainFricError> {
+
+        let (&name_id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
+            ||
+                err!(ElaborateError::UnknownIdentifier(accessor.name.clone())),
+            |(id, data_type)|
+                Ok((id, data_type.clone()))
+        )?;
+
+        let mut specifiers = Vec::new();
+
+        for specifier in accessor.specifiers.iter() {
+            
+            match (data_type, specifier) {
+                (ElaboratedDataType::Sequence(inner_type, len), Specifier::ConstIndex(idx)) => {
+
+                    if *idx as usize >= len {
+                        err!(ElaborateError::OutOfBoundsAccess);
+                    }
+
+                    specifiers.push(ElaboratedSpecifier::ConstOffset(*idx as usize * self.get_type_size(&inner_type)));
                     data_type = *inner_type;
                     
                 }
@@ -351,20 +412,23 @@ impl Elaborator {
                         todo!("bad access");
                     };
                     
-                    offset += field_offset;
+
+                    specifiers.push(ElaboratedSpecifier::ConstOffset(field_offset));
                     data_type = new_data_type;
 
+                }
+                (ElaboratedDataType::Stack(inner_type, _), Specifier::StackPop) => {
+
+                    self.current_block.push(ElaboratedStatement::StackPop(self.name_table[&accessor.name].0, self.get_type_size(&inner_type)));
+
+                    specifiers.push(ElaboratedSpecifier::ConstOffset(1));
+
+                    data_type = *inner_type;
+                    
                 }
                 _ => todo!("bad access")
             }
         }
-
-        let specifiers = if offset != 0 {
-            vec![ElaboratedSpecifier::ConstOffset(offset)]
-        }
-        else {
-            Vec::new()
-        }.into_boxed_slice();
 
         let elaborated_accessor = ElaboratedAccessor {
             name_id,
@@ -377,7 +441,7 @@ impl Elaborator {
 
     fn get_expression_type(&self, expression: &Expression) -> Result<ElaboratedDataType, BrainFricError> {
         Ok(match expression {
-            Expression::Access(accessor) => self.convert_accessor(accessor.clone())?.0,
+            Expression::Access(accessor) => self.get_accessor_type(&accessor)?,
             Expression::Add(expr1, expr2) | 
             Expression::Subtract(expr1, expr2) | 
             Expression::Multiply(expr1, expr2) | 
@@ -412,7 +476,7 @@ impl Elaborator {
         let expr2_type = self.get_expression_type(&expression2)?;
 
         for data_type in [ElaboratedDataType::Byte, ElaboratedDataType::Short, ElaboratedDataType::GenericNumber] {
-            if expr1_type.can_conflate(&data_type) && expr2_type.can_conflate(&data_type) {
+            if data_type.can_conflate(&expr1_type) && data_type.can_conflate(&expr2_type) {
                 return Ok(Some(data_type));
             }
         }
@@ -421,7 +485,7 @@ impl Elaborator {
 
     }
 
-    fn try_conflate_to_comparable(&self, expression1: &Expression, expression2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
+    fn try_conflate_to_equateable(&self, expression1: &Expression, expression2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
 
         let expr1_type = self.get_expression_type(&expression1)?;
         let expr2_type = self.get_expression_type(&expression2)?;
@@ -436,7 +500,7 @@ impl Elaborator {
         }))
     }
 
-    fn elaborate_bool_expression(&self, expression: Expression) -> Result<Box<BoolExpression>, BrainFricError> {
+    fn elaborate_bool_expression(&mut self, expression: Expression) -> Result<Box<BoolExpression>, BrainFricError> {
 
         Ok(Box::new(match expression {
             Expression::Access(parsed_accessor) => {
@@ -460,24 +524,23 @@ impl Elaborator {
                     _ => todo!()
                 }
             }
-            Expression::And(expr1, expr2)
-                => BoolExpression::And(
+            Expression::And(expr1, expr2) =>
+                BoolExpression::And(
                     self.elaborate_bool_expression(*expr1)?,
                     self.elaborate_bool_expression(*expr2)?
             ),
-            Expression::Or(expr1, expr2)
-                => BoolExpression::Or(
+            Expression::Or(expr1, expr2) =>
+                BoolExpression::Or(
                     self.elaborate_bool_expression(*expr1)?,
                     self.elaborate_bool_expression(*expr2)?
             ),
-            Expression::Not(parsed_expression)
-                => BoolExpression::Not(
-                    self.elaborate_bool_expression(*parsed_expression)?
+            Expression::Not(parsed_expression) =>
+                BoolExpression::Not(self.elaborate_bool_expression(*parsed_expression)?
             ),
             Expression::Equals(expr1, expr2)
             => {
 
-                match self.try_conflate_to_comparable(&expr1, &expr2)? {
+                match self.try_conflate_to_equateable(&expr1, &expr2)? {
                     Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteEquals(
                         self.elaborate_byte_expression(*expr1)?,
                         self.elaborate_byte_expression(*expr2)?
@@ -490,12 +553,12 @@ impl Elaborator {
                         todo!(),
                         todo!()
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => todo!()//err!(self.current_todo!())
                 }
             }
             Expression::NotEquals(expr1, expr2) => {
                 
-                match self.try_conflate_to_comparable(&expr1, &expr2)? {
+                match self.try_conflate_to_equateable(&expr1, &expr2)? {
                     Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteNotEquals(
                         self.elaborate_byte_expression(*expr1)?,
                         self.elaborate_byte_expression(*expr2)?
@@ -508,7 +571,11 @@ impl Elaborator {
                         todo!(),
                         todo!()
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => {
+                        println!("{expr1:?} {expr2:?} {:?}", self.try_conflate_to_equateable(&expr1, &expr2)?);
+                        todo!()
+                    }
+                    //_ => todo!()//err!(self.current_todo!())
                 }
             }
             Expression::GreaterThan(expr1, expr2) => {
@@ -522,7 +589,7 @@ impl Elaborator {
                         self.elaborate_short_expression(*expr1)?,
                         self.elaborate_short_expression(*expr2)?
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => todo!()//err!(self.current_todo!())
                 }
             }
             Expression::GreaterThanEqual(expr1, expr2) => {
@@ -536,7 +603,7 @@ impl Elaborator {
                         self.elaborate_short_expression(*expr1)?,
                         self.elaborate_short_expression(*expr2)?
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => todo!()//err!(self.current_todo!())
                 }
             }
             Expression::LessThan(expr1, expr2) => {
@@ -550,7 +617,7 @@ impl Elaborator {
                         self.elaborate_short_expression(*expr1)?,
                         self.elaborate_short_expression(*expr2)?
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => todo!()//err!(self.current_todo!())
                 }
             }
             Expression::LessThanEqual(expr1, expr2) => {
@@ -564,14 +631,14 @@ impl Elaborator {
                         self.elaborate_short_expression(*expr1)?,
                         self.elaborate_short_expression(*expr2)?
                     ),
-                    _ => todo!()//err!(self.current_line_num, todo!())
+                    _ => todo!()//err!(self.current_todo!())
                 }
             }
-            _ => err!(self.current_line_num, ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Bool))
+            _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Bool))
         }))
     }
 
-    fn elaborate_byte_expression(&self, expression: Expression) -> Result<Box<ByteExpression>, BrainFricError> {
+    fn elaborate_byte_expression(&mut self, expression: Expression) -> Result<Box<ByteExpression>, BrainFricError> {
 
         Ok(Box::new(match expression {
             Expression::Access(parsed_accessor) => {
@@ -605,11 +672,11 @@ impl Elaborator {
                     self.elaborate_byte_expression(*expr1)?,
                     self.elaborate_byte_expression(*expr2)?
             ),
-            _ => err!(self.current_line_num, ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
+            _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
         }))
     }
 
-    fn elaborate_short_expression(&self, expression: Expression) -> Result<Box<ShortExpression>, BrainFricError> {
+    fn elaborate_short_expression(&mut self, expression: Expression) -> Result<Box<ShortExpression>, BrainFricError> {
 
         Ok(Box::new(match expression {
             Expression::Access(parsed_accessor) => {
@@ -643,17 +710,32 @@ impl Elaborator {
                     self.elaborate_short_expression(*expr1)?,
                     self.elaborate_short_expression(*expr2)?
             ),
-            _ => err!(self.current_line_num, ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
+            _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
         }))
     }
 
-    fn elaborate_enum_expression(&self, expression: Expression, enum_id: usize) -> Result<Box<ByteExpression>, BrainFricError> {
+    fn elaborate_enum_expression(&mut self, expression: Expression, enum_id: usize) -> Result<Box<ByteExpression>, BrainFricError> {
 
         Ok(Box::new(match expression {
             Expression::EnumVariant(enum_name, variant_name)
                 => ByteExpression::Constant(self.get_enum_variant_value(enum_name, variant_name)?),
-            _ => err!(self.current_line_num, ElaborateError::ExpectedTypedExpression(ElaboratedDataType::UserEnum(enum_id))) // bad!
+            _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::UserEnum(enum_id))) // bad!
         }))
+    }
+
+    fn elaborate_string_expression(&mut self, expression: Expression, max_size: usize) -> Result<StringExpression, BrainFricError> {
+        Ok(match expression {
+            Expression::StringLiteral(string) => {
+
+                if string.len() > max_size {
+                    err!(ElaborateError::StringLiteralTooLarge(string, max_size))
+                }
+
+                StringExpression::Constant(string)
+                
+            }
+            _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::GenericString))
+        })
     }
 
     fn try_match_types(&self, type1: ElaboratedDataType, type2: ElaboratedDataType) -> Result<ElaboratedDataType, BrainFricError> {
@@ -668,40 +750,72 @@ impl Elaborator {
             Ok(type1)
         }
         else {
-            err!(self.current_line_num, ElaborateError::TypeMismatch(type1, type2))
+            err!(ElaborateError::TypeMismatch(type1, type2))
         }
     }
 
     fn assert_data_type(&self, expected_type: ElaboratedDataType, got_type: &ElaboratedDataType) -> Result<(), BrainFricError> {
 
         if expected_type != *got_type {
-            err!(self.current_line_num, ElaborateError::TypeMismatch(expected_type.clone(), got_type.clone()))
+            err!(ElaborateError::TypeMismatch(expected_type.clone(), got_type.clone()))
         }
 
         Ok(())
 
     }
 
+    fn assign(&mut self, mut accessor: ElaboratedAccessor, data_type: ElaboratedDataType, expression: Expression) -> Result<(), BrainFricError> {
+
+        let statement = match data_type {
+            ElaboratedDataType::Bool => 
+                ElaboratedStatement::AssignBool(accessor, *self.elaborate_bool_expression(expression)?),
+            ElaboratedDataType::Byte => 
+                ElaboratedStatement::AssignByte(accessor, *self.elaborate_byte_expression(expression)?),
+            ElaboratedDataType::Short => 
+                ElaboratedStatement::AssignShort(accessor, *self.elaborate_short_expression(expression)?),
+            ElaboratedDataType::UserEnum(enum_id) => 
+                ElaboratedStatement::AssignByte(accessor, *self.elaborate_enum_expression(expression, enum_id)?),
+            ElaboratedDataType::Sequence(box ElaboratedDataType::Byte, size) => 
+                ElaboratedStatement::AssignString(accessor, self.elaborate_string_expression(expression, size)?),
+            ElaboratedDataType::Stack(inner_type, _) => {
+
+                let name_id = accessor.name_id;
+                let size = self.get_type_size(&inner_type);
+
+                accessor.specifiers.push(ElaboratedSpecifier::ConstOffset(1)); // dicey
+                self.assign(accessor, *inner_type, expression)?;
+                
+                ElaboratedStatement::StackPush(name_id, size)
+
+            }
+            _ => todo!()
+        };
+
+        self.current_block.push(statement);
+
+        Ok(())
+    }
+
     fn elaborate_block(&mut self, block: Block) -> Result<ElaboratedBlock, BrainFricError> {
 
-        let mut elaborated_block = ElaboratedBlock::new();
+        let mut old_block = take(&mut self.current_block);
 
         for statement in block {
 
-            self.current_line_num = statement.line_num;
+            set_line_num(statement.line_num);
         
             match statement.body {
                 StatementBody::Declaration(names, parsed_data_type) => {
 
-                    let data_type = ElaboratedDataType::convert_parsed(&parsed_data_type, statement.line_num, &self.user_definitions)?;
+                    let data_type = ElaboratedDataType::convert_parsed(&parsed_data_type, &self.user_definitions)?;
 
-                    let size = data_type.get_size(&self.user_definitions);
+                    let size = self.get_type_size(&data_type);
 
                     for name in names {
 
                         self.name_table.insert(name, (self.next_name_id, data_type.clone()));
 
-                        elaborated_block.push(ElaboratedStatement::Declaration(self.next_name_id, size));
+                        self.current_block.push(ElaboratedStatement::Declaration(self.next_name_id, size));
                         self.next_name_id += 1;
 
                     }
@@ -712,20 +826,15 @@ impl Elaborator {
 
                     // need to check if used accessor is in expression and copy if so
 
-                    elaborated_block.push(match accessor_data_type {
-                        ElaboratedDataType::Bool => ElaboratedStatement::AssignBool(accessor, *self.elaborate_bool_expression(expression)?),
-                        ElaboratedDataType::Byte => ElaboratedStatement::AssignByte(accessor, *self.elaborate_byte_expression(expression)?),
-                        ElaboratedDataType::Short => ElaboratedStatement::AssignShort(accessor, *self.elaborate_short_expression(expression)?),
-                        ElaboratedDataType::UserEnum(enum_id) => ElaboratedStatement::AssignByte(accessor, *self.elaborate_enum_expression(expression, enum_id)?),
-                        _ => todo!()
-                    });
+                    self.assign(accessor, accessor_data_type, expression)?;
+
                 }
                 StatementBody::Inc(accessor) => {
 
                     let (data_type, elaborated_accessor) = self.convert_accessor(accessor)?;
                     self.assert_data_type(ElaboratedDataType::Byte, &data_type)?;
 
-                    elaborated_block.push(ElaboratedStatement::Increment(elaborated_accessor, 1))
+                    self.current_block.push(ElaboratedStatement::Increment(elaborated_accessor, 1))
 
                 }
                 StatementBody::Dec(accessor) => {
@@ -733,21 +842,21 @@ impl Elaborator {
                     let (data_type, elaborated_accessor) = self.convert_accessor(accessor)?;
                     self.assert_data_type(ElaboratedDataType::Byte, &data_type)?;
                     
-                    elaborated_block.push(ElaboratedStatement::Increment(elaborated_accessor, 255));
+                    self.current_block.push(ElaboratedStatement::Increment(elaborated_accessor, 255));
 
                 }
                 StatementBody::Clear(parsed_accessor) => {
                     
                     let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
                     
-                    elaborated_block.push(ElaboratedStatement::Clear(accessor, data_type.get_size(&self.user_definitions)));
+                    self.current_block.push(ElaboratedStatement::Clear(accessor, self.get_type_size(&data_type)));
 
                 }
                 StatementBody::Write(expression) => {
 
                     let data_type = self.get_expression_type(&expression)?;
 
-                    elaborated_block.push(match data_type {
+                    let statement = match data_type {
                         ElaboratedDataType::Bool => ElaboratedStatement::WriteBool(*self.elaborate_bool_expression(expression)?),
                         ElaboratedDataType::Byte => ElaboratedStatement::WriteByte(*self.elaborate_byte_expression(expression)?),
                         ElaboratedDataType::Sequence(box ElaboratedDataType::Byte, _) => ElaboratedStatement::WriteByteSequence(todo!(), todo!()),
@@ -761,45 +870,49 @@ impl Elaborator {
                                 todo!()
                             }
                         }
-                    });
+                    };
+
+                    self.current_block.push(statement);
+
                 }
                 StatementBody::WriteAsNum(parsed_expression) => {
 
                     // todo: add short
 
-                    elaborated_block.push(ElaboratedStatement::WriteByteAsNum(*self.elaborate_byte_expression(parsed_expression)?));
+                    let statement = ElaboratedStatement::WriteByteAsNum(*self.elaborate_byte_expression(parsed_expression)?);
+                    self.current_block.push(statement);
 
                 }
                 StatementBody::WriteLine => {
-                    elaborated_block.push(ElaboratedStatement::WriteByte(ByteExpression::Constant(10)))
+                    self.current_block.push(ElaboratedStatement::WriteByte(ByteExpression::Constant(10)))
                 }
                 StatementBody::Read(parsed_accessor) => {
 
                     let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
                     self.assert_data_type(ElaboratedDataType::Byte, &data_type)?;
 
-                    elaborated_block.push(ElaboratedStatement::ReadByte(accessor));
+                    self.current_block.push(ElaboratedStatement::ReadByte(accessor));
                 
                 }
                 StatementBody::While(expression, block) => {
 
-                    elaborated_block.push(ElaboratedStatement::While(
-                        *self.elaborate_bool_expression(expression)?,
-                        self.elaborate_block(block)?
-                    ));
+                    let expr = *self.elaborate_bool_expression(expression)?;
+                    let loop_block = self.elaborate_block(block)?;
+
+                    self.current_block.push(ElaboratedStatement::While(expr, loop_block));
                 }
                 StatementBody::If(expression, then_block, else_block) => {
 
-                    elaborated_block.push(ElaboratedStatement::If(
-                        *self.elaborate_bool_expression(expression)?,
-                        self.elaborate_block(then_block)?,
-                        if let Some(block) = else_block {
-                            Some(self.elaborate_block(block)?)
-                        }
-                        else {
-                            None
-                        }
-                    ));
+                    let expr = *self.elaborate_bool_expression(expression)?;
+                    let then = self.elaborate_block(then_block)?;
+                    let r#else = if let Some(block) = else_block {
+                        Some(self.elaborate_block(block)?)
+                    }
+                    else {
+                        None
+                    };
+
+                    self.current_block.push(ElaboratedStatement::If(expr, then, r#else));
                 }
                 StatementBody::Switch(expression, parsed_arms, parsed_default_block) => {
 
@@ -833,14 +946,15 @@ impl Elaborator {
                         _ => todo!()
                     };
 
-                    elaborated_block.push(ElaboratedStatement::Switch(elaborated_expression, arms, default_block))
+                    self.current_block.push(ElaboratedStatement::Switch(elaborated_expression, arms, default_block))
 
                 }
                 _ => todo!()
             }
         }
 
-        Ok(elaborated_block)
+        swap(&mut self.current_block, &mut old_block);
+        Ok(old_block)
 
     }
 }
@@ -850,7 +964,7 @@ pub fn elaborate(parsed_program: ParsedProgram) -> Result<ElaboratedBlock, Brain
     let mut elaborator = Elaborator {
         user_definitions: UserDefinitions::new(parsed_program.definitions)?,
         name_table: HashMap::new(),
-        current_line_num: 0,
+        current_block: ElaboratedBlock::new(),
         next_name_id: 0
     };
 

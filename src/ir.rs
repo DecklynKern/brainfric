@@ -117,6 +117,8 @@ pub enum IRStatement {
     ReadByte(Identifier),
     Loop(Identifier, IRBlock, bool),
     Switch {temp_block: Identifier, arms: Vec<(u8, IRBlock)>, default: Option<IRBlock>}, // temp_block = 2 cells
+    StackPush(Identifier, usize),
+    StackPop(Identifier, usize)
 }
 
 pub fn generate_ir(elaborated_program: ElaboratedBlock) -> IRBlock {
@@ -178,6 +180,7 @@ impl IRGenerator {
                 ElaboratedSpecifier::ConstOffset(offset) => {
                     true_id += offset;
                 }
+                _ => {}
             }
         }
 
@@ -696,12 +699,18 @@ impl IRGenerator {
                 }
                 ElaboratedStatement::WriteByte(expression) => {
 
-                    // todo: add optimizations for cases where copy is unnecessary
-
-                    with_temp!(self, temp, {
-                        self.evaluate_byte_expression_into(expression, temp, false);
-                        self.do_write_byte(temp);
-                    });
+                    // don't copy if we don't have to
+                    if let ByteExpression::Access(accessor) = expression {
+                        let id = self.resolve_accessor(accessor);
+                        self.do_write_byte(id);
+                    }
+                    else
+                    {
+                        with_temp!(self, temp, {
+                            self.evaluate_byte_expression_into(expression, temp, false);
+                            self.do_write_byte(temp);
+                        });
+                    }
                 }
                 ElaboratedStatement::WriteShort(expression) => {
                     todo!()
@@ -833,6 +842,12 @@ impl IRGenerator {
 
                     self.free_block(temp_block, 2);
                     
+                }
+                ElaboratedStatement::StackPush(id, size) => {
+                    self.ir.0.push(IRStatement::StackPush(self.name_table[id], size));
+                }
+                ElaboratedStatement::StackPop(id, size) => {
+                    self.ir.0.push(IRStatement::StackPop(self.name_table[id], size));
                 }
                 _ => todo!("unimplemented statement type")
             }
