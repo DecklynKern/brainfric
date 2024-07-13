@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::mem::{take, swap};
+use std::mem::{take, swap, replace};
 
 use crate::lex::Name;
 use crate::parse::*;
@@ -82,6 +82,7 @@ pub enum ElaboratedDataType {
     Bool,
     Byte,
     Short,
+    Fixed,
     Sequence(Box<ElaboratedDataType>, usize),
     GenericNumber,
     GenericString,
@@ -123,6 +124,7 @@ impl ElaboratedDataType {
             Self::Bool => 1,
             Self::Byte => 1,
             Self::Short => 2,
+            Self::Fixed => 2,
             Self::Sequence(data_type, len) => len * data_type.get_size(user_definitions),
             Self::Stack(data_type, len) => (len + 1) * (data_type.get_size(user_definitions) + 1) + 1,
             Self::UserEnum(_) => 1,
@@ -169,6 +171,7 @@ impl ElaboratedDataType {
             DataTypeHead::Bool => Self::Bool,
             DataTypeHead::Byte => Self::Byte,
             DataTypeHead::Short => Self::Short,
+            DataTypeHead::Fixed => Self::Fixed,
             DataTypeHead::Sequence => Self::Sequence(
                 Box::new(Self::convert_parsed_simple(Self::get_subtype(&params[0]), user_definitions)?),
                 Self::get_constant_val(&params[1])
@@ -177,6 +180,7 @@ impl ElaboratedDataType {
                 Box::new(Self::convert_parsed_simple(Self::get_subtype(&params[0]), user_definitions)?),
                 Self::get_constant_val(&params[1])
             ),
+            DataTypeHead::Array => todo!(),
             DataTypeHead::UserDefined(name) => {
 
                 match user_definitions.enum_name_table.get(name) {
@@ -285,7 +289,7 @@ pub enum ElaboratedStatement {
     Clear(ElaboratedAccessor, usize),
     WriteBool(BoolExpression),
     WriteByte(ByteExpression),
-    WriteShort(ShortExpression),
+    WriteShortAsNum(ShortExpression),
     WriteByteSequence(ElaboratedAccessor, usize), // add write string?
     WriteByteAsNum(ByteExpression),
     WriteConstString(Rc<str>),
@@ -308,6 +312,21 @@ struct Elaborator {
 }
 
 impl Elaborator {
+
+    fn fold_expression(&self, expression: &mut Expression) {
+
+        replace(expression, match *expression {
+            Expression::Add(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
+                Expression::NumberLiteral(a + b),
+            Expression::Subtract(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
+                    Expression::NumberLiteral(a - b),
+            Expression::Multiply(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
+                Expression::NumberLiteral(a * b),
+            Expression::Divide(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
+                Expression::NumberLiteral(a / b),
+            _ => return
+        });
+    }
 
     fn get_type_size(&self, data_type: &ElaboratedDataType) -> usize {
         data_type.get_size(&self.user_definitions)
@@ -351,7 +370,7 @@ impl Elaborator {
         for specifier in accessor.specifiers.iter() {
             
             match (data_type, specifier) {
-                (ElaboratedDataType::Sequence(inner_type, len), Specifier::ConstIndex(idx)) => {
+                (ElaboratedDataType::Sequence(inner_type, len), Specifier::Index(Expression::NumberLiteral(idx))) => {
 
                     if *idx as usize >= len {
                         err!(ElaborateError::OutOfBoundsAccess);
@@ -395,7 +414,7 @@ impl Elaborator {
         for specifier in accessor.specifiers.iter() {
             
             match (data_type, specifier) {
-                (ElaboratedDataType::Sequence(inner_type, len), Specifier::ConstIndex(idx)) => {
+                (ElaboratedDataType::Sequence(inner_type, len), Specifier::Index(Expression::NumberLiteral(idx))) => {
 
                     if *idx as usize >= len {
                         err!(ElaborateError::OutOfBoundsAccess);
@@ -820,9 +839,11 @@ impl Elaborator {
 
                     }
                 }
-                StatementBody::Assign(parsed_accessor, expression) => {
+                StatementBody::Assign(parsed_accessor, mut expression) => {
 
                     let (accessor_data_type, accessor) = self.convert_accessor(parsed_accessor)?;
+
+                    self.fold_expression(&mut expression);
 
                     // need to check if used accessor is in expression and copy if so
 
@@ -852,7 +873,9 @@ impl Elaborator {
                     self.current_block.push(ElaboratedStatement::Clear(accessor, self.get_type_size(&data_type)));
 
                 }
-                StatementBody::Write(expression) => {
+                StatementBody::Write(mut expression) => {
+
+                    self.fold_expression(&mut expression);
 
                     let data_type = self.get_expression_type(&expression)?;
 
@@ -875,11 +898,18 @@ impl Elaborator {
                     self.current_block.push(statement);
 
                 }
-                StatementBody::WriteAsNum(parsed_expression) => {
+                StatementBody::WriteAsNum(mut parsed_expression) => {
 
-                    // todo: add short
+                    self.fold_expression(&mut parsed_expression);
 
-                    let statement = ElaboratedStatement::WriteByteAsNum(*self.elaborate_byte_expression(parsed_expression)?);
+                    let data_type = self.get_expression_type(&parsed_expression)?;
+
+                    let statement = match data_type {
+                        ElaboratedDataType::Byte => ElaboratedStatement::WriteByteAsNum(*self.elaborate_byte_expression(parsed_expression)?),
+                        ElaboratedDataType::Short => ElaboratedStatement::WriteShortAsNum(*self.elaborate_short_expression(parsed_expression)?),
+                        _ => todo!()
+                    };
+                    
                     self.current_block.push(statement);
 
                 }

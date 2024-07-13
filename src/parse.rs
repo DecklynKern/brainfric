@@ -30,8 +30,10 @@ pub enum DataTypeHead {
     Bool,
     Byte,
     Short,
+    Fixed,
     Sequence,
     Stack,
+    Array,
     UserDefined(Name)
 }
 
@@ -67,7 +69,7 @@ impl Default for ParsedDataType {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Specifier {
-    ConstIndex(u32),
+    Index(Expression),
     Field(Name),
     StackPop
 }
@@ -214,7 +216,7 @@ impl<'a> Parser<'a> {
             err!(ParseError::InvalidType);
         };
 
-        if let Token::NumberLiteral(num) = token {
+        if let Token::IntegerLiteral(num) = token {
             self.tokens.next();
             Ok(DataTypeParameter::Constant(*num as usize))
         }
@@ -234,9 +236,10 @@ impl<'a> Parser<'a> {
             Token::Bool => DataTypeHead::Bool,
             Token::Byte => DataTypeHead::Byte,
             Token::Short => DataTypeHead::Short,
+            Token::Fixed => DataTypeHead::Fixed,
             Token::Sequence => DataTypeHead::Sequence,
             Token::Stack => DataTypeHead::Stack,
-            Token::Array => todo!(),
+            Token::Array => DataTypeHead::Array,
             Token::Identifier(name) => DataTypeHead::UserDefined(name.clone()),
             _ => err!(ParseError::InvalidType)
         };
@@ -277,36 +280,44 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_parse_specifier(&mut self) -> Option<Specifier> {
+    fn try_parse_specifier(&mut self) -> Result<Option<Specifier>, BrainFricError> {
 
         if self.tokens.peek().is_some_and(|token| token.is_specifier_head()) {
 
-            Some(match self.tokens.next().unwrap() {
-                Token::At => 
-                    // change when array happens
-                    expect_token!(self.tokens, Token::NumberLiteral(idx), {Specifier::ConstIndex(*idx as u32)}),
+            Ok(Some(match self.tokens.next().unwrap() {
+                Token::OpenSquare => {
+
+                    let expr = self.parse_expression()?;
+
+                    if !self.try_take_token(Token::CloseSquare) {
+                        err!(ParseError::ExpectedCloseAngle)
+                    }
+
+                    Specifier::Index(expr)
+                    
+                }
                 Token::Dot => match self.tokens.next() {
                     Some(Token::Identifier(ident)) => Specifier::Field(ident.clone()),
-                    _ => return None
+                    _ => return Ok(None)
                 }
                 Token::Exclamation => Specifier::StackPop,
                 _ => unreachable!()
-            })
+            }))
         }
         else {
-            None
+            Ok(None)
         }
     }
 
-    fn parse_specifiers(&mut self) -> Box<[Specifier]> {
+    fn parse_specifiers(&mut self) -> Result<Box<[Specifier]>, BrainFricError> {
 
         let mut specifiers = Vec::new();
 
-        while let Some(specifier) = self.try_parse_specifier() {
+        while let Some(specifier) = self.try_parse_specifier()? {
             specifiers.push(specifier);
         }
 
-        specifiers.into_boxed_slice()
+        Ok(specifiers.into_boxed_slice())
 
     }
 
@@ -319,7 +330,7 @@ impl<'a> Parser<'a> {
 
         Ok(Accessor {
             name: name.clone(),
-            specifiers: self.parse_specifiers()
+            specifiers: self.parse_specifiers()?
         })
     }
 
@@ -386,7 +397,7 @@ impl<'a> Parser<'a> {
                 
             }
             Token::BoolLiteral(val) => Expression::BoolLiteral(*val),
-            Token::NumberLiteral(val) => Expression::NumberLiteral(*val),
+            Token::IntegerLiteral(val) => Expression::NumberLiteral(*val),
             Token::CharLiteral(chr) => Expression::NumberLiteral(*chr as i32),
             Token::StringLiteral(val) => Expression::StringLiteral(val.clone()),
             Token::Identifier(name) => {
@@ -403,7 +414,7 @@ impl<'a> Parser<'a> {
                 else {
                     Expression::Access(Accessor {
                         name: name.clone(),
-                        specifiers: self.parse_specifiers()
+                        specifiers: self.parse_specifiers()?
                     })
                 }
             }
@@ -596,7 +607,7 @@ impl<'a> Parser<'a> {
 
                 let accessor = Accessor {
                     name: name.clone(),
-                    specifiers: self.parse_specifiers()
+                    specifiers: self.parse_specifiers()?
                 };
 
                 self.try_take_token(Token::SetTo);
@@ -615,7 +626,7 @@ impl<'a> Parser<'a> {
                     err!(ParseError::ExpectedOpenAngle);
                 }
                 
-                let Some(Token::NumberLiteral(offset)) = self.tokens.next()
+                let Some(Token::IntegerLiteral(offset)) = self.tokens.next()
                 else {
                     err!(ParseError::ExpectedNumberLiteral);
                 };
@@ -697,7 +708,7 @@ impl<'a> Parser<'a> {
                             
                             let value = if self.try_take_token(Token::Equal) {
 
-                                let Some(Token::NumberLiteral(val)) = self.tokens.next() else {
+                                let Some(Token::IntegerLiteral(val)) = self.tokens.next() else {
                                     err!(ParseError::InvalidDefinition);
                                 };
 

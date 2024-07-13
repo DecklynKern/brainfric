@@ -9,6 +9,8 @@ use crate::elaborate::*;
 
 pub type Identifier = usize;
 
+struct MemBlock<const N: usize>(Identifier);
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Allocation {
     Variable(Identifier),
@@ -113,7 +115,8 @@ pub enum IRStatement {
     MoveCell(Box<[(Identifier, bool)]>, Identifier),
     WriteByte(Identifier),
     WriteByteSequence(Identifier, usize),
-    WriteByteAsNumber {id: Identifier, temp_block: Identifier}, // temp_block = 6 cells
+    WriteByteAsNumber {id: Identifier, temp_block: Identifier, destructive: bool}, // temp_block = 6 cells
+    WriteShortAsNumber {id: Identifier, temp_block: Identifier},
     ReadByte(Identifier),
     Loop(Identifier, IRBlock, bool),
     Switch {temp_block: Identifier, arms: Vec<(u8, IRBlock)>, default: Option<IRBlock>}, // temp_block = 2 cells
@@ -229,13 +232,22 @@ impl IRGenerator {
         self.ir.0.push(IRStatement::WriteByte(id));
     }
 
-    fn do_write_byte_as_number(&mut self, id: Identifier) {
+    fn do_write_byte_as_number(&mut self, id: Identifier, destructive: bool) {
         
         let temp_block = self.allocate_temporary_block(6);
-        self.ir.0.push(IRStatement::WriteByteAsNumber { id, temp_block });
+        self.ir.0.push(IRStatement::WriteByteAsNumber { id, temp_block, destructive });
 
         self.free_block(temp_block, 6);
         
+    }
+
+    fn do_write_short_as_number(&mut self, id: Identifier) {
+
+        let temp_block = self.allocate_temporary_block(9);
+        self.ir.0.push(IRStatement::WriteShortAsNumber {id, temp_block});
+
+        self.free_block(temp_block, 9);
+
     }
 
     // assume temp is 0
@@ -311,7 +323,7 @@ impl IRGenerator {
                 self.do_add_const(short_high, 1);
     
             });
-        });
+        }); 
     }
 
     fn do_add_const_short(&mut self, id: Identifier, val: u16) {
@@ -491,6 +503,8 @@ impl IRGenerator {
                 });
             }
             BoolExpression::ByteGreaterThanEqual(expr1, expr2) => {
+
+                // https://stackoverflow.com/a/13327857
 
                 with_temp!(self, temp1, temp2, temp3, {
 
@@ -685,16 +699,12 @@ impl IRGenerator {
 
                         do_if_bool!(self, temp1, {
                             self.do_sub_const(temp2, 1);
-                            self.do_write_string_with_temp("tru", temp2);
+                            self.do_write_string_with_temp("true", temp2);
                         });
 
                         do_if_bool!(self, temp2, {
-                            self.do_write_string_with_temp("fals", temp1);
+                            self.do_write_string_with_temp("false", temp1);
                         });
-
-                        // cute minor optimization
-                        self.do_write_string_with_temp("e", temp1);
-
                     });
                 }
                 ElaboratedStatement::WriteByte(expression) => {
@@ -712,14 +722,30 @@ impl IRGenerator {
                         });
                     }
                 }
-                ElaboratedStatement::WriteShort(expression) => {
-                    todo!()
-                }
                 ElaboratedStatement::WriteByteAsNum(expression) => {
-                    with_temp!(self, temp, {
-                        self.evaluate_byte_expression_into(expression, temp, false);
-                        self.do_write_byte_as_number(temp);
-                    });
+
+                    // don't copy if we don't have to
+                    if let ByteExpression::Access(accessor) = expression {
+                        let id = self.resolve_accessor(accessor);
+                        self.do_write_byte_as_number(id, false);
+                    }
+                    else
+                    {
+                        with_temp!(self, temp, {
+                            self.evaluate_byte_expression_into(expression, temp, false);
+                            self.do_write_byte_as_number(temp, true);
+                        });
+                    }
+                }
+                ElaboratedStatement::WriteShortAsNum(expression) => {
+
+                    let temp = self.allocate_temporary_block(2);
+
+                    self.evaluate_short_expression_into(expression, temp, false);
+                    self.do_write_short_as_number(temp);
+
+                    self.free_block(temp, 2);
+
                 }
                 ElaboratedStatement::WriteByteSequence(accessor, length) => {
                     let id = self.resolve_accessor(accessor);

@@ -54,10 +54,13 @@ impl Lowerer {
 
     }
 
-    fn interpret_named_code<const N: usize>(&mut self, code: &str, ids: [Identifier; N]) {
-        for char in code.chars() {
+    fn interpret_named_code_with_flag<const N: usize>(&mut self, code: &str, ids: [Identifier; N], flag: bool) {
 
-            if char.is_whitespace() {
+        let mut chars = code.chars();
+
+        while let Some(char) = chars.next() {
+
+            if char.is_whitespace() || char == '}' {
                 continue;
             }
 
@@ -68,9 +71,25 @@ impl Lowerer {
                 'd' => self.jump_to(ids[3]),
                 'e' => self.jump_to(ids[4]),
                 'f' => self.jump_to(ids[5]),
+                '{' => {
+
+                    if flag {
+                        continue;
+                    }
+
+                    while let Some(block_char) = chars.next() {
+                        if block_char == '}' {
+                            break;
+                        }
+                    }
+                }
                 _ => self.bf_code.push(char)
             }
         }
+    }
+
+    fn interpret_named_code<const N: usize>(&mut self, code: &str, ids: [Identifier; N]) {
+        self.interpret_named_code_with_flag(code, ids, true);
     }
 
     fn stack_traverse_in(&mut self, cell_size: usize) {
@@ -148,14 +167,61 @@ impl Lowerer {
                     self.bf_code.push_str(&"<".repeat(len));
 
                 }
-                IRStatement::WriteByteAsNumber { id, temp_block } => {
-                    self.interpret_named_code(
+                IRStatement::WriteByteAsNumber { id, temp_block, destructive } => {
+                    self.interpret_named_code_with_flag(
                         "b>++++++++++<a
-                        [-b+>-[>+>>]>[+[-<+>]>+>>]<<<<<a]b>[-]>>>++++++++++<
+                        [-b{+}>-[>+>>]>[+[-<+>]>+>>]<<<<<a]b>[-]>>>++++++++++<
                         [->-[>+>>]>[+[-<+>]>+>>]<<<<<]>[-]>>
                         [>++++++[-<++++++++>]<.<<+>+>[-]]<
-                        [<[->-<]++++++[->++++++++<]>.[-]]<<++++++
-                        [-<++++++++>]<.[-]<<[-a+b]",
+                        [<[->-<]++++++[->++++++++<]>.[-]]<
+                        <++++++[-<++++++++>]<.[-]<<{[-a+b]}",
+                        [id, temp_block],
+                        !destructive
+                    );
+                }
+                IRStatement::WriteShortAsNumber { id, temp_block } => {
+
+                    // could be made more efficient maybe
+                    // also could implement non-destructive case
+
+                    self.interpret_named_code(
+                        "b>++++++++++<a
+                        [-b>-[>+>>]>[+[-<+>]>+>>]<<<<<a]
+                        b>[-]
+
+                        >[-<<+>>]
+                        >[-<<+>>]
+
+                        ++++++++++<<<<
+                        [->>>>-[>+>>]>[+[-<+>]>+>>]<<<<<<<<]
+                        >>>>[-]>>>++++++++++<
+                        [->-[>+>>]>[+[-<+>]>+>>]<<<<<]
+                        
+                        <[-<<++<+++++<++++++>>>>]
+                        >>[-]>[-<<<<++<+++++<++++++>>>>>>]
+                        >[-<<<<++<+++++<++++++>>>>>>]
+                        
+                        <<<++++++++++<<<<<
+                        [->>>>>-[>+>>]>[+[-<+>]>+>>]<<<<<<<<<]
+                        >>>>>[-]>[-<<<<<<+>>>>>>]>[-<<<<<<+>>>>>>]
+                        
+                        <<++++++++++<<<<
+                        [->>>>-[>+>>]>[+[-<+>]>+>>]<<<<<<<<]
+                        >>>>[-]>[-<<<<<+>>>>>]>[-<<<<<+>>>>>]
+                        
+                        <<++++++++++<<<
+                        [->>>-[>+>>]>[+[-<+>]>+>>]<<<<<<<]
+                        >>>[-]>[-<<<<+>>>>]>[-<<<<+>>>>]
+                        
+                        <<++++++++++<<
+                        [->>-[>+>>]>[+[-<+>]>+>>]<<<<<<]
+                        >>[-]>>[-<<<+>>>]
+
+                        <<<[>++++++[-<++++++++>]<.>+>+<<[-]]
+                        >>[<[->-<]++++++[->++++++++<]>.<<<+<+>>>>[-]]
+                        <<<<[>[-<->]++++++[-<++++++++>]<.>+<<+>[-]]
+                        <[>>[-<<->>]<++++++[-<++++++++>]<.[-]]
+                        ++++++[-<++++++++>]<.[-]",
                         [id, temp_block]
                     );
                 }

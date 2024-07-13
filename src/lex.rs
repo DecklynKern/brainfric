@@ -7,7 +7,7 @@ use std::iter::Peekable;
 
 pub type Name = Rc<str>;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Token {
 
     Comment,
@@ -16,13 +16,15 @@ pub enum Token {
     Identifier(Name),
 
     BoolLiteral(bool),
-    NumberLiteral(i32),
+    IntegerLiteral(i32),
+    DecimalLiteral(f32),
     CharLiteral(char),
     StringLiteral(Rc<str>),
 
     Bool,
     Byte,
     Short,
+    Fixed,
     Sequence,
     String,
     Stack,
@@ -95,6 +97,7 @@ impl Token {
             "bool" => Self::Bool,
             "byte" => Self::Byte,
             "short" => Self::Short,
+            "fixed" => Self::Fixed,
             "seq" => Self::Sequence,
             "string" => Self::String,
             "stack" => Self::Stack,
@@ -161,6 +164,7 @@ impl Token {
             Self::Bool |
             Self::Byte |
             Self::Short |
+            Self::Fixed |
             Self::Sequence |
             Self::String |
             Self::Stack |
@@ -180,7 +184,7 @@ impl Token {
         matches!(self,
             Self::OpenParen |
             Self::BoolLiteral(_) |
-            Self::NumberLiteral(_) |
+            Self::IntegerLiteral(_) |
             Self::CharLiteral(_) |
             Self::StringLiteral(_)
         )
@@ -239,7 +243,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, BrainFricError> {
         }
         
         if let Some(num) = try_lex_number_literal(&mut chars) {
-            tokens.push(Token::NumberLiteral(num));
+            tokens.push(Token::IntegerLiteral(num));
             continue;
         }
 
