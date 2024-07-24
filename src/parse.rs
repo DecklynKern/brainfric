@@ -290,8 +290,10 @@ impl<'a> Parser<'a> {
                     let expr = self.parse_expression()?;
 
                     if !self.try_take_token(Token::CloseSquare) {
-                        err!(ParseError::ExpectedCloseAngle)
+                        err!(ParseError::ExpectedCloseSquare)
                     }
+
+                    println!("{expr:?}");
 
                     Specifier::Index(expr)
                     

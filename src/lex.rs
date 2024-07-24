@@ -176,7 +176,8 @@ impl Token {
         matches!(self,
             Self::At |
             Self::Dot |
-            Self::Exclamation
+            Self::Exclamation |
+            Self::OpenSquare
         )
     }
 
