@@ -30,12 +30,27 @@ Here are some examples:
 * `x <- ?(#x + b)`
 
 ## Specifiers
-An specifier accesses a segment of a larger data structure. The only currently supported specifier is `[seq] @ N` which is a constant index into a sequence, for example:
+An specifier accesses a segment of a larger data structure. For example a sequence can be indexed by a constant index as one would expect:
 ```
 seq<byte, 3> s
-s @ 0 <- 1
-s @ 1 <- 2
-s @ 2 <- 3
+s[0] <- 1
+s[1] <- 2
+s[2] <- 3
+```
+
+`short`s can also have their low and high bytes accessed:
+```
+var x : short
+x.upper <- 10
+```
+
+Also, stacks can be pushed to by assigning to them and popped from using `!`:
+```
+var x : stack<byte, 10>
+x <- 4
+x <- 5
+writenum x!
+writenum x!
 ```
 
 ## Expressions
@@ -48,7 +63,9 @@ The following operations are allowed in expressions:
 
 ## I/O
 The `read [name]` statement reads a character from the input into the specified byte variable.
-The `write [expression]` statement writes the byte values of the result of the expression into the output.
+The `write [expression]` statement can write strings, booleans, or byte values.
+The `writenum [expression]` writes a `byte` or `short` value as a number
+`writeln` writes a newline character.
 
 ## Control flow
 Currently there are only two control flow patterns allowed: `while [expression]` and `if [expression]`.
