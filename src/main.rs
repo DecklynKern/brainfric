@@ -2,6 +2,7 @@
 #![feature(if_let_guard)]
 #![feature(box_patterns)]
 #![feature(exact_size_is_empty)]
+#![feature(generic_const_exprs)]
 
 use std::fs::File;
 use std::io::prelude::*;

@@ -20,7 +20,7 @@ struct Lowerer {
     bf_code: String,
     data_head: usize,
     stack_pointer: usize,
-    identifier_table: HashMap<Identifier, usize>
+    identifier_table: HashMap<Identifier, (usize, usize)>
 }
 
 impl Lowerer {
@@ -46,50 +46,52 @@ impl Lowerer {
         );
     }
 
-    fn jump_to(&mut self, id: Identifier) {
+    fn jump_to(&mut self, ptr: Pointer) {
         
-        let id_address = self.identifier_table[&id];
-        self.jump_diff(self.data_head, id_address);
-        self.data_head = id_address;
+        let id_cell = self.identifier_table[&ptr.id].0;
+        self.jump_diff(self.data_head, id_cell);
+        
+        self.jump_right(ptr.offset);
+
+        self.data_head = id_cell + ptr.offset;
 
     }
 
-    fn interpret_named_code_with_flag<const N: usize>(&mut self, code: &str, ids: [Identifier; N], flag: bool) {
+    fn push_code(&mut self, code: &str) {
+        
+        let mut chars = code.chars();
+
+        while let Some(char) = chars.next() {
+            
+            if char.is_whitespace() {
+                continue;
+            }
+
+            self.bf_code.push(char);
+
+        }
+    }
+
+    fn interpret_named_code<const N: usize>(&mut self, code: &str, ptrs: [Pointer; N]) {
 
         let mut chars = code.chars();
 
         while let Some(char) = chars.next() {
 
-            if char.is_whitespace() || char == '}' {
+            if char.is_whitespace() {
                 continue;
             }
 
             match char {
-                'a' => self.jump_to(ids[0]),
-                'b' => self.jump_to(ids[1]),
-                'c' => self.jump_to(ids[2]),
-                'd' => self.jump_to(ids[3]),
-                'e' => self.jump_to(ids[4]),
-                'f' => self.jump_to(ids[5]),
-                '{' => {
-
-                    if flag {
-                        continue;
-                    }
-
-                    while let Some(block_char) = chars.next() {
-                        if block_char == '}' {
-                            break;
-                        }
-                    }
-                }
+                'a' => self.jump_to(ptrs[0]),
+                'b' => self.jump_to(ptrs[1]),
+                'c' => self.jump_to(ptrs[2]),
+                'd' => self.jump_to(ptrs[3]),
+                'e' => self.jump_to(ptrs[4]),
+                'f' => self.jump_to(ptrs[5]),
                 _ => self.bf_code.push(char)
             }
         }
-    }
-
-    fn interpret_named_code<const N: usize>(&mut self, code: &str, ids: [Identifier; N]) {
-        self.interpret_named_code_with_flag(code, ids, true);
     }
 
     fn stack_traverse_in(&mut self, cell_size: usize) {
@@ -113,15 +115,19 @@ impl Lowerer {
             match ir_statement {
 
                 IRStatement::Alloc(allocation) => {
-                    self.identifier_table.insert(allocation.get_identifier(), self.stack_pointer);
-                    self.stack_pointer += 1;
+                    
+                    self.identifier_table.insert(allocation.id, (self.stack_pointer, allocation.size));
+                    self.stack_pointer += allocation.size;
+
+                    println!("{:?}", self.identifier_table);
+
                 }
                 IRStatement::Free(reg) => {
 
-                    let memory = self.identifier_table[&reg];
+                    let (cell_idx, size) = self.identifier_table[&reg];
                         
-                    if self.stack_pointer - 1 == memory {
-                        self.stack_pointer -= 1;
+                    if self.stack_pointer == cell_idx + size {
+                        self.stack_pointer -= size;
                     }
                 }
                 IRStatement::AddConst(id, num) => {
@@ -167,22 +173,23 @@ impl Lowerer {
                     self.bf_code.push_str(&"<".repeat(len));
 
                 }
-                IRStatement::WriteByteAsNumber { id, temp_block, destructive } => {
-                    self.interpret_named_code_with_flag(
-                        "b>++++++++++<a
-                        [-b{+}>-[>+>>]>[+[-<+>]>+>>]<<<<<a]b>[-]>>>++++++++++<
+                IRStatement::WriteByteAsNumber {temp_block} => {
+
+                    self.jump_to(temp_block.at(0));
+
+                    self.push_code(
+                        ">++++++++++<
+                        [->-[>+>>]>[+[-<+>]>+>>]<<<<<]>[-]>>>++++++++++<
                         [->-[>+>>]>[+[-<+>]>+>>]<<<<<]>[-]>>
                         [>++++++[-<++++++++>]<.<<+>+>[-]]<
                         [<[->-<]++++++[->++++++++<]>.[-]]<
-                        <++++++[-<++++++++>]<.[-]<<{[-a+b]}",
-                        [id, temp_block],
-                        !destructive
+                        <++++++[-<++++++++>]<.[-]<<"
                     );
                 }
-                IRStatement::WriteShortAsNumber { id, temp_block } => {
+                IRStatement::WriteShortAsNumber { ptr, temp_block } => {
 
                     // could be made more efficient maybe
-                    // also could implement non-destructive case
+                    // remove passed in ptr sometime
 
                     self.interpret_named_code(
                         "b>++++++++++<a
@@ -222,7 +229,18 @@ impl Lowerer {
                         <<<<[>[-<->]++++++[-<++++++++>]<.>+<<+>[-]]
                         <[>>[-<<->>]<++++++[-<++++++++>]<.[-]]
                         ++++++[-<++++++++>]<.[-]",
-                        [id, temp_block]
+                        [ptr, temp_block.at(0)]
+                    );
+                }
+                IRStatement::Compare(temp_block) => {
+
+                    self.jump_to(temp_block.at(0));
+
+                    self.push_code(
+                        ">>>>+<<
+                        [-<-[<]>>]
+                        >[-<<<<+>>>]
+                        >[-]<<[-]<[-]<"
                     );
                 }
                 IRStatement::Loop(id, block, _) => {
@@ -237,7 +255,7 @@ impl Lowerer {
                 }
                 IRStatement::Switch {temp_block, arms, default} => {
                     
-                    self.jump_to(temp_block);
+                    self.jump_to(temp_block.at(0));
                     self.bf_code.push_str("+>");
 
                     let mut prev_case = 0;
@@ -301,11 +319,11 @@ impl Lowerer {
                     self.stack_traverse_out(cell_size);
 
                 }
-                IRStatement::StackPop(id, size) => {
+                IRStatement::StackPop(ptr, size) => {
 
                     let cell_size = size + 1;
 
-                    self.jump_to(id);
+                    self.jump_to(ptr);
                     self.jump_right(cell_size);
 
                     self.stack_traverse_in(cell_size);

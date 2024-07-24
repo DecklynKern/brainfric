@@ -2,6 +2,7 @@
 #![feature(if_let_guard)]
 #![feature(box_patterns)]
 #![feature(exact_size_is_empty)]
+#![feature(generic_const_exprs)]
 
 pub mod args;
 pub mod error;
