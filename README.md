@@ -10,13 +10,15 @@ The goal is to create a language that is simple but has enough features to write
 Each statement is placed on a new line with no semicolons required.
 
 ## Variables
-Variables are declared with a `[type] [name]` statement as in `byte a` or `bool x`.
+Variables are declared with a `var [name] : [type]` statement as in `var a : byte` or `var x : bool` (if a type isn't specified it is assumed to be `byte`.
 Currently there are only three types (more are planned):
 * `byte` represents a single byte
   * This can be seen as both a value from 0-255 or a single ASCII character, just like a C char
 * `bool` represents a boolean `true` or `false`
+* `short` represents a 16-bit unsigned integer from 0-65535
 * `seq<[type], [size]>` represents a sequence of `size` values of type `type`
   * `seq<byte, 5>` is a sequence of 5 bytes
+* `stack<[type], [size]>` represents a stack of `size` values of type `type` which maintains a stack head for pushing and popping
 
 ## Assignment
 Variables are assigned values using a `[name] <- [expression]` statement.
@@ -53,17 +55,18 @@ Currently there are only two control flow patterns allowed: `while [expression]`
 These expressions must be of bool type, and then followed by the statements inside, and finally an `end` statement to close the block.
 
 ## Example program
-This is a program in brainfric that prints out the byte values of the Fibonacci sequence (mod 256 because of overflow) until it loops back to 0:
+This is a program in brainfric that prints out the values of the Fibonacci sequence (mod 256 because of overflow) until it loops back to 0:
 ```
-byte a
-byte b
-byte c
+var a : byte
+var b : byte
+var c : byte
 
 a <- 0
 b <- 1
 
-while ?a
-  write a
+while ?b
+  writenum a
+  writeln
   c <- a + b
   a <- b
   b <- c
@@ -96,6 +99,4 @@ brainfric assumes the following about the interpreter running its code (these ar
 * the I/O operations use single bytes to transfer characters (like chars in C) in whatever encoding is used (some ASCII extension)
 
 ## brainfric IR
-Like many other compilers, brainfric uses an intermediate representation (IR) to perform optimizations on the given code. brainfric IR is much different from IRs because of the nature of the language it will eventually be converted into. It represents higher-level BF operations that are broken down more finely than individual lines of brainfric code, but are still much easier to work with than actual BF code.
-
-TODO: explain IR statements.
+TODO
