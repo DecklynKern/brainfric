@@ -533,29 +533,60 @@ impl Elaborator {
             Expression::BoolLiteral(bool_value) => {
                 BoolExpression::Constant(bool_value)
             }
-            Expression::AsBool(expression) => {
-                
-                let data_type = self.get_expression_type(&expression)?;
-                
-                match data_type {
-                    ElaboratedDataType::Byte => BoolExpression::ConvertByte(self.elaborate_byte_expression(*expression)?),
-                    ElaboratedDataType::Short => BoolExpression::ConvertShort(self.elaborate_short_expression(*expression)?),
+            Expression::UnaryExpression(expression_type, child) => {
+
+                match expression_type {
+                    UnaryExpressionType::Not => BoolExpression::Not(self.elaborate_bool_expression(*child)?),
+                    UnaryExpressionType::AsBool => {
+
+                        let data_type = self.get_expression_type(&child)?;
+
+                        match data_type {
+                            ElaboratedDataType::Byte => BoolExpression::ConvertByte(self.elaborate_byte_expression(*child)?),
+                            ElaboratedDataType::Short => BoolExpression::ConvertShort(self.elaborate_short_expression(*child)?),
+                            _ => todo!()
+                        }
+
+                    }
+                    UnaryExpressionType::AsByte => todo!()
+                }
+            }
+            Expression::BinaryExpression(expression_type, child1, child2) => {
+
+                match expression_type {
+                    BinaryExpressionType::And | BinaryExpressionType::Or => {
+
+                        let expr = match expression_type {
+                            BinaryExpressionType::And => BoolExpression::And,
+                            BinaryExpressionType::Or => BoolExpression::Or,
+                            _ => unreachable!()
+                        };
+                        
+                        expr(self.elaborate_bool_expression(*child1)?, self.elaborate_bool_expression(*child2)?)
+
+                    }
+                    BinaryExpressionType::Equals | BinaryExpressionType::NotEquals => {
+
+                        match self.try_conflate_to_equateable(&expr1, &expr2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteEquals(
+                                self.elaborate_byte_expression(*expr1)?,
+                                self.elaborate_byte_expression(*expr2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortEquals(
+                                self.elaborate_short_expression(*expr1)?,
+                                self.elaborate_short_expression(*expr2)?
+                            ),
+                            Some(ElaboratedDataType::UserEnum(enum_id)) => BoolExpression::ByteEquals(
+                                todo!(),
+                                todo!()
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
+
+                    }
                     _ => todo!()
                 }
             }
-            Expression::And(expr1, expr2) =>
-                BoolExpression::And(
-                    self.elaborate_bool_expression(*expr1)?,
-                    self.elaborate_bool_expression(*expr2)?
-            ),
-            Expression::Or(expr1, expr2) =>
-                BoolExpression::Or(
-                    self.elaborate_bool_expression(*expr1)?,
-                    self.elaborate_bool_expression(*expr2)?
-            ),
-            Expression::Not(parsed_expression) =>
-                BoolExpression::Not(self.elaborate_bool_expression(*parsed_expression)?
-            ),
             Expression::Equals(expr1, expr2)
             => {
 

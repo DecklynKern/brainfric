@@ -93,6 +93,29 @@ pub enum MatchArm {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum UnaryExpressionType {
+    Not,
+    AsBool,
+    AsByte
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum BinaryExpressionType {
+    Equals,
+    NotEquals,
+    LessThan,
+    GreaterThan,
+    LessThanEqual,
+    GreaterThanEqual,
+    And,
+    Or,
+    Add,
+    Subtract,
+    Multiply,
+    Divide
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expression {
 
     Access(Accessor),
@@ -101,24 +124,8 @@ pub enum Expression {
     NumberLiteral(i32),
     StringLiteral(Rc<str>),
 
-    Equals(Box<Expression>, Box<Expression>),
-    NotEquals(Box<Expression>, Box<Expression>),
-    LessThan(Box<Expression>, Box<Expression>),
-    GreaterThan(Box<Expression>, Box<Expression>),
-    LessThanEqual(Box<Expression>, Box<Expression>),
-    GreaterThanEqual(Box<Expression>, Box<Expression>),
-
-    Not(Box<Expression>),
-    And(Box<Expression>, Box<Expression>),
-    Or(Box<Expression>, Box<Expression>),
-
-    Add(Box<Expression>, Box<Expression>),
-    Subtract(Box<Expression>, Box<Expression>),
-    Multiply(Box<Expression>, Box<Expression>),
-    Divide(Box<Expression>, Box<Expression>),
-
-    AsBool(Box<Expression>),
-    AsByte(Box<Expression>)
+    UnaryExpression(UnaryExpressionType, Box<Expression>),
+    BinaryExpression(BinaryExpressionType, Box<Expression>, Box<Expression>)
 
 }
 
@@ -336,15 +343,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn try_parse_binary_operator_precedence_2(&mut self) -> Option<fn(Box<Expression>, Box<Expression>) -> Expression> {
+    fn try_parse_binary_operator_precedence_2(&mut self) -> Option<BinaryExpressionType> {
 
         let Some(op_token) = self.tokens.peek() else {
             return None;
         };
 
         let op_func = match op_token {
-            Token::Star => Expression::Multiply,
-            Token::ForwardSlash => Expression::Divide,
+            Token::Star => BinaryExpressionType::Multiply,
+            Token::ForwardSlash => BinaryExpressionType::Divide,
             _ => return None
         };
 
@@ -353,7 +360,7 @@ impl<'a> Parser<'a> {
 
     }
 
-    fn try_parse_binary_operator_precedence_1(&mut self) -> Option<fn(Box<Expression>, Box<Expression>) -> Expression> {
+    fn try_parse_binary_operator_precedence_1(&mut self) -> Option<BinaryExpressionType> {
 
         let Some(op_token) = self.tokens.peek()
         else {
@@ -361,16 +368,16 @@ impl<'a> Parser<'a> {
         };
 
         let op_func = match op_token {
-            Token::Equal => Expression::Equals,
-            Token::NotEqual => Expression::NotEquals,
-            Token::OpenAngle => Expression::LessThan,
-            Token::CloseAngle => Expression::GreaterThan,
-            Token::LessThanEqual => Expression::LessThanEqual,
-            Token::GreaterThanEqual => Expression::GreaterThanEqual,
-            Token::Plus => Expression::Add,
-            Token::Hypen => Expression::Subtract,
-            Token::Ampersand => Expression::And,
-            Token::Pipe => Expression::Or,
+            Token::Equal => BinaryExpressionType::Equals,
+            Token::NotEqual => BinaryExpressionType::NotEquals,
+            Token::OpenAngle => BinaryExpressionType::LessThan,
+            Token::CloseAngle => BinaryExpressionType::GreaterThan,
+            Token::LessThanEqual => BinaryExpressionType::LessThanEqual,
+            Token::GreaterThanEqual => BinaryExpressionType::GreaterThanEqual,
+            Token::Plus => BinaryExpressionType::Add,
+            Token::Hypen => BinaryExpressionType::Subtract,
+            Token::Ampersand => BinaryExpressionType::And,
+            Token::Pipe => BinaryExpressionType::Or,
             _ => return None
         };
 
@@ -436,29 +443,32 @@ impl<'a> Parser<'a> {
             let op = self.tokens.next().unwrap();
             let factor = self.parse_factor()?;
 
-            Ok(match op {
-                Token::Question => Expression::AsBool,
-                Token::Pound => Expression::AsByte,
-                Token::Exclamation => Expression::Not,
-                _ => unreachable!()
-            }(Box::new(factor)))
+            Ok(Expression::UnaryExpression(
+                match op {
+                    Token::Question => UnaryExpressionType::AsBool,
+                    Token::Pound => UnaryExpressionType::AsByte,
+                    Token::Exclamation => UnaryExpressionType::Not,
+                    _ => unreachable!()
+                },
+                Box::new(factor)
+            ))
         }
         else {
 
             let factor1 = self.parse_factor()?;
 
-            let Some(operator) = self.try_parse_binary_operator_precedence_2()
+            let Some(expression_type) = self.try_parse_binary_operator_precedence_2()
             else {
                 return Ok(factor1);
             };
 
             let factor2 = self.parse_factor()?;
 
-            let mut expr = operator(Box::new(factor1), Box::new(factor2));
+            let mut expr = Expression::BinaryExpression(expression_type, Box::new(factor1), Box::new(factor2));
 
-            while let Some(next_operator) = self.try_parse_binary_operator_precedence_2() {
-                let next_term = self.parse_factor()?;
-                expr = next_operator(Box::new(expr), Box::new(next_term));
+            while let Some(next_expression_type) = self.try_parse_binary_operator_precedence_2() {
+                let next_factor = self.parse_factor()?;
+                expr = Expression::BinaryExpression(next_expression_type, Box::new(expr), Box::new(next_factor));
             }
 
             Ok(expr)
@@ -466,22 +476,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // likely merge with term code
     fn parse_expression(&mut self) -> Result<Expression, BrainFricError> {
 
         let term1 = self.parse_term()?;
 
-        let Some(operator) = self.try_parse_binary_operator_precedence_1()
+        let Some(expression_type) = self.try_parse_binary_operator_precedence_1()
         else {
             return Ok(term1);
         };
 
         let term2 = self.parse_term()?;
 
-        let mut expr = operator(Box::new(term1), Box::new(term2));
+        let mut expr = Expression::BinaryExpression(expression_type, Box::new(term1), Box::new(term2));
 
-        while let Some(next_operator) = self.try_parse_binary_operator_precedence_1() {
+        while let Some(next_expression_type) = self.try_parse_binary_operator_precedence_1() {
             let next_term = self.parse_term()?;
-            expr = next_operator(Box::new(expr), Box::new(next_term));
+            expr = Expression::BinaryExpression(next_expression_type, Box::new(expr), Box::new(next_term));
         }
 
         Ok(expr)
