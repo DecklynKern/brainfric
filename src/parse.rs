@@ -1,3 +1,4 @@
+use std::mem::replace;
 use std::rc::Rc;
 use std::iter::Peekable;
 use std::slice::Iter;
@@ -22,7 +23,8 @@ macro_rules! expect_token {
 #[derive(Debug)]
 pub enum Definition {
     Enum(Name, Vec<(Name, u8)>),
-    Struct(Name, Vec<(Name, ParsedDataType)>)
+    Struct(Name, Vec<(Name, ParsedDataType)>),
+    Macro(Name, Vec<Name>, Expression)
 }
 
 #[derive(Debug)]
@@ -125,8 +127,59 @@ pub enum Expression {
     StringLiteral(Rc<str>),
 
     UnaryExpression(UnaryExpressionType, Box<Expression>),
-    BinaryExpression(BinaryExpressionType, Box<Expression>, Box<Expression>)
+    BinaryExpression(BinaryExpressionType, Box<Expression>, Box<Expression>),
 
+    MacroInvocation(Name, Box<[Expression]>)
+
+}
+
+impl Expression {
+
+    pub fn replace(&mut self, parameters: &[Name], expressions: &[Expression]) {
+
+        let new_expr_idx = match self {
+            Self::Access(accessor) => {
+
+                if accessor.specifiers.is_empty() {
+
+                    let mut i = 0;
+
+                    loop {
+
+                        if i >= parameters.len() {
+                            return;
+                        }
+                        
+                        if parameters[i] == accessor.name {
+                            break;
+                        }
+
+                        i += 1;
+
+                    };
+
+                    i
+
+                }
+                else {
+                    return;
+                }
+            }
+            Self::UnaryExpression(_, child) => {
+                child.replace(parameters, expressions);
+                return;
+            }
+            Self::BinaryExpression(_, child1, child2) => {
+                child1.replace(parameters, expressions);
+                child2.replace(parameters, expressions);
+                return;
+            }
+            _ => return
+        };
+
+        let _ = replace(self, expressions[new_expr_idx].clone());
+
+    }
 }
 
 #[derive(Debug)]
@@ -426,6 +479,31 @@ impl<'a> Parser<'a> {
                         specifiers: self.parse_specifiers()?
                     })
                 }
+            }
+            Token::Dollar => {
+
+                let Some(Token::Identifier(name)) = self.tokens.next()
+                else {
+                    err!(ParseError::ExpectedIdentifier);
+                };
+
+                let mut arguments = Vec::new();
+
+                if self.try_take_token(Token::OpenParen) {
+
+                    arguments.push(self.parse_expression()?);
+
+                    while self.try_take_token(Token::Comma) {
+                        arguments.push(self.parse_expression()?);
+                    }
+
+                    if !self.try_take_token(Token::CloseParen) {
+                        err!(ParseError::ExpectedCloseParen);
+                    }
+                }
+
+                Expression::MacroInvocation(name.clone(), arguments.into_boxed_slice())
+
             }
             _ => err!(ParseError::InvalidExpression)
         })
@@ -781,6 +859,44 @@ impl<'a> Parser<'a> {
 
                 Definition::Struct(name.clone(), fields)
 
+            }
+            Token::Identifier(name) => {
+
+                let mut arguments = Vec::new();
+
+                if self.try_take_token(Token::OpenParen) {
+
+                    let Some(Token::Identifier(arg1)) = self.tokens.next()
+                    else {
+                        err!(ParseError::ExpectedIdentifier);
+                    };
+
+                    arguments.push(arg1.clone());
+
+                    while self.try_take_token(Token::Comma) {
+
+                        let Some(Token::Identifier(next_arg)) = self.tokens.next()
+                        else {
+                            err!(ParseError::ExpectedIdentifier);
+                        };
+
+                        arguments.push(next_arg.clone());
+
+                    }
+
+                    if !self.try_take_token(Token::CloseParen) {
+                        err!(ParseError::ExpectedCloseParen);
+                    }
+                }
+
+                if !self.try_take_token(Token::Equal) {
+                    err!(ParseError::ExpectedEqual);
+                }
+
+                let expression = self.parse_expression()?;
+
+                Definition::Macro(name.clone(), arguments, expression)
+                
             }
             _ => err!(ParseError::InvalidDefinition)
         })

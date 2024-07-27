@@ -26,16 +26,16 @@ struct Lowerer {
 impl Lowerer {
 
     fn jump_left(&mut self, jump: usize) {
-        self.bf_code.push_str(&"<".repeat(jump));
+        self.bf_code += &("<".repeat(jump));
     }
 
     fn jump_right(&mut self, jump: usize) {
-        self.bf_code.push_str(&">".repeat(jump));
+        self.bf_code += &(">".repeat(jump));
     }
 
     fn jump_diff(&mut self, from: usize, to: usize) {
         
-        self.bf_code.push_str(&
+        self.bf_code += &(
             if to > from {
                 ">"
             }
@@ -95,15 +95,15 @@ impl Lowerer {
     }
 
     fn stack_traverse_in(&mut self, cell_size: usize) {
-        self.bf_code.push('[');
+        self.bf_code += "[";
         self.jump_right(cell_size);
-        self.bf_code.push(']');
+        self.bf_code += "]";
     }
 
     fn stack_traverse_out(&mut self, cell_size: usize) {
-        self.bf_code.push('[');
+        self.bf_code += "[";
         self.jump_left(cell_size);
-        self.bf_code.push(']');
+        self.bf_code += "]";
     }
 
     fn lower_statements(&mut self, ir: IRBlock) {
@@ -119,8 +119,6 @@ impl Lowerer {
                     self.identifier_table.insert(allocation.id, (self.stack_pointer, allocation.size));
                     self.stack_pointer += allocation.size;
 
-                    println!("{:?}", self.identifier_table);
-
                 }
                 IRStatement::Free(reg) => {
 
@@ -134,43 +132,45 @@ impl Lowerer {
                     
                     self.jump_to(id);
 
-                    self.bf_code.push_str(&
-                        if num > 127 {
-                            "-".repeat(num.wrapping_neg() as usize)
-                        }
-                        else {
-                            "+".repeat(num as usize)
-                        }
-                    );
+                    self.bf_code += &(if num > 127 {
+                        "-".repeat(num.wrapping_neg() as usize)
+                    }
+                    else {
+                        "+".repeat(num as usize)
+                    });
                 }
                 IRStatement::MoveCell(to, from) => {
 
                     self.jump_to(from);
-                    self.bf_code.push_str("[-");
+                    self.bf_code += "[-";
 
-                    for (reg, negate) in to.iter() {
+                    for (reg, factor) in to.iter() {
+
+                        let chr = if *factor < 0 {"-"} else {"+"};
+                        let amount = factor.abs() as usize;
+
                         self.jump_to(*reg);
-                        self.bf_code.push(if *negate {'-'} else {'+'});
+                        self.bf_code += &chr.repeat(amount);
                     }
 
                     self.jump_to(from);
-                    self.bf_code.push(']');
+                    self.bf_code += "]";
 
                 }
                 IRStatement::ReadByte(id) => {
                     self.jump_to(id);
-                    self.bf_code.push(',');
+                    self.bf_code += ",";
                 }
                 IRStatement::WriteByte(id) => {
                     self.jump_to(id);
-                    self.bf_code.push('.');
+                    self.bf_code += ".";
                 }
                 IRStatement::WriteByteSequence(id, len) => {
 
                     self.jump_to(id);
                     
-                    self.bf_code.push_str(&".>".repeat(len));
-                    self.bf_code.push_str(&"<".repeat(len));
+                    self.bf_code += &(".>".repeat(len));
+                    self.bf_code += &("<".repeat(len));
 
                 }
                 IRStatement::WriteByteAsNumber {temp_block} => {
@@ -247,45 +247,45 @@ impl Lowerer {
 
                     self.jump_to(id);
 
-                    self.bf_code.push('[');
+                    self.bf_code += "[";
                     self.lower_statements(block);
                     self.jump_to(id);
-                    self.bf_code.push(']');
+                    self.bf_code += "]";
 
                 }
                 IRStatement::Switch {temp_block, arms, default} => {
                     
                     self.jump_to(temp_block.at(0));
-                    self.bf_code.push_str("+>");
+                    self.bf_code += "+>";
 
                     let mut prev_case = 0;
 
                     for (case, _) in arms.iter() {
 
-                        self.bf_code.push_str(&"-".repeat((case - prev_case) as usize));
+                        self.bf_code += &"-".repeat((case - prev_case) as usize);
                         prev_case = *case;
                         
-                        self.bf_code.push('[');
+                        self.bf_code += "[";
 
                     }
 
-                    self.bf_code.push_str("<-");
+                    self.bf_code += "<-";
 
                     if let Some(statements) = default {
                         self.lower_statements(statements);
                     }
 
-                    self.bf_code.push_str(">[-]");
+                    self.bf_code += ">[-]";
 
                     for (_, arm) in arms.into_iter().rev() {
 
-                        self.bf_code.push_str("]<[-");
+                        self.bf_code += "]<[-";
                         self.lower_statements(arm);
-                        self.bf_code.push_str("]>");
+                        self.bf_code += "]>";
 
                     }
 
-                    self.bf_code.push('<');
+                    self.bf_code += "<";
 
                 }
                 IRStatement::StackPush(id, size) => {
@@ -296,26 +296,26 @@ impl Lowerer {
 
                     for offset in 0..size {
 
-                        self.bf_code.push_str(">[-");
+                        self.bf_code += ">[-";
                         self.jump_right(size - offset);
 
                         self.stack_traverse_in(cell_size);
 
                         self.jump_right(offset + 1);
-                        self.bf_code.push('+');
+                        self.bf_code += "+";
                         self.jump_left(cell_size + offset + 1);
 
                         self.stack_traverse_out(cell_size);
 
                         self.jump_right(offset + 1);
-                        self.bf_code.push(']');
+                        self.bf_code += "]";
 
                     }
 
-                    self.bf_code.push('>');
+                    self.bf_code += ">";
 
                     self.stack_traverse_in(cell_size);
-                    self.bf_code.push('+');
+                    self.bf_code += "+";
                     self.stack_traverse_out(cell_size);
 
                 }
@@ -331,23 +331,23 @@ impl Lowerer {
                     for offset in 0..size {
 
                         self.jump_left(size - offset);
-                        self.bf_code.push_str("[-");
+                        self.bf_code += "[-";
                         self.jump_left(offset + 1);
                         self.stack_traverse_out(cell_size);
 
                         self.jump_right(offset + 1);
-                        self.bf_code.push('+');
+                        self.bf_code += "+";
                         self.jump_right(cell_size - offset + 1);
 
                         self.stack_traverse_in(cell_size);
 
                         self.jump_left(size - offset);
-                        self.bf_code.push(']');
+                        self.bf_code += "]";
 
                     }
 
                     self.jump_left(size);
-                    self.bf_code.push('-');
+                    self.bf_code += "-";
                     self.jump_left(cell_size);
 
                     self.stack_traverse_out(cell_size);

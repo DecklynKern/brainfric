@@ -16,10 +16,16 @@ struct UserStruct {
     pub fields: HashMap<Name, (ElaboratedDataType, usize)>
 }
 
+struct UserMacro {
+    pub arguments: Vec<Name>,
+    pub expression: Expression
+}
+
 struct UserDefinitions {
     pub enum_name_table: HashMap<Name, usize>,
-    pub enums: Vec<UserEnum>,
     pub struct_name_table: HashMap<Name, usize>,
+    pub macros: HashMap<Name, UserMacro>,
+    pub enums: Vec<UserEnum>,
     pub structs: Vec<UserStruct>
 }
 
@@ -29,8 +35,9 @@ impl UserDefinitions {
 
         let mut user_definitions = UserDefinitions {
             enum_name_table: HashMap::new(),
-            enums: Vec::new(),
             struct_name_table: HashMap::new(),
+            macros: HashMap::new(),
+            enums: Vec::new(),
             structs: Vec::new()
         };
     
@@ -68,6 +75,16 @@ impl UserDefinitions {
                         size: offset,
                         fields: user_struct_fields
                     });
+                }
+                Definition::Macro(name, arguments, expression) => {
+
+                    let user_macro = UserMacro {
+                        arguments: arguments,
+                        expression
+                    };
+
+                    user_definitions.macros.insert(name, user_macro);
+
                 }
             }
         }
@@ -218,6 +235,9 @@ pub enum BoolExpression {
     Access(ElaboratedAccessor),
     Constant(bool),
 
+    BoolEquals(Box<BoolExpression>, Box<BoolExpression>),
+    BoolNotEquals(Box<BoolExpression>, Box<BoolExpression>),
+
     ByteEquals(Box<ByteExpression>, Box<ByteExpression>),
     ByteNotEquals(Box<ByteExpression>, Box<ByteExpression>),
     ByteLessThan(Box<ByteExpression>, Box<ByteExpression>),
@@ -250,6 +270,7 @@ pub enum ByteExpression {
 
     Add(Box<ByteExpression>, Box<ByteExpression>),
     Subtract(Box<ByteExpression>, Box<ByteExpression>),
+    ConstMultiply(Box<ByteExpression>, u8),
     Multiply(Box<ByteExpression>, Box<ByteExpression>),
     Divide(Box<ByteExpression>, Box<ByteExpression>),
 
@@ -312,21 +333,6 @@ struct Elaborator {
 }
 
 impl Elaborator {
-
-    fn fold_expression(&self, expression: &mut Expression) {
-
-        replace(expression, match *expression {
-            Expression::Add(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
-                Expression::NumberLiteral(a + b),
-            Expression::Subtract(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
-                    Expression::NumberLiteral(a - b),
-            Expression::Multiply(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
-                Expression::NumberLiteral(a * b),
-            Expression::Divide(box Expression::NumberLiteral(a), box Expression::NumberLiteral(b)) =>
-                Expression::NumberLiteral(a / b),
-            _ => return
-        });
-    }
 
     fn get_type_size(&self, data_type: &ElaboratedDataType) -> usize {
         data_type.get_size(&self.user_definitions)
@@ -400,6 +406,39 @@ impl Elaborator {
 
     }
 
+    fn resolve_macros(&self, expression: &mut Expression) -> Result<(), BrainFricError> {
+
+        match expression {
+            Expression::UnaryExpression(_, child) => {
+                self.resolve_macros(child)?;
+            }
+            Expression::BinaryExpression(_, child1, child2) => {
+                self.resolve_macros(child1)?;
+                self.resolve_macros(child2)?;
+            }
+            Expression::MacroInvocation(macro_name, arguments) => {
+
+                let Some(user_macro) = self.user_definitions.macros.get(macro_name)
+                else {
+                    err!(ElaborateError::UnknownMacro(macro_name.clone()));
+                };
+
+                let mut macro_expression = user_macro.expression.clone();
+
+                macro_expression.replace(&user_macro.arguments, arguments);
+
+                let _ = replace(expression, macro_expression);
+
+                self.resolve_macros(expression)?;
+
+            }
+            _ => {}
+        }
+
+        Ok(())
+
+    }
+
     fn convert_accessor(&mut self, accessor: Accessor) -> Result<(ElaboratedDataType, ElaboratedAccessor), BrainFricError> {
 
         let (&name_id, mut data_type) = self.name_table.get(accessor.name.as_ref()).map_or_else(
@@ -461,38 +500,45 @@ impl Elaborator {
     fn get_expression_type(&self, expression: &Expression) -> Result<ElaboratedDataType, BrainFricError> {
         Ok(match expression {
             Expression::Access(accessor) => self.get_accessor_type(&accessor)?,
-            Expression::Add(expr1, expr2) | 
-            Expression::Subtract(expr1, expr2) | 
-            Expression::Multiply(expr1, expr2) | 
-            Expression::Divide(expr1, expr2) => {
-
-                let type1 = self.get_expression_type(expr1)?;
-                let type2 = self.get_expression_type(expr2)?;
-
-                // probably not completely correct
-                if type1 == ElaboratedDataType::Byte {
-                    ElaboratedDataType::Byte
-                }
-                else if type1 == ElaboratedDataType::Short {
-                    ElaboratedDataType::Short
-                }
-                else {
-                    type2
-                }
+            Expression::UnaryExpression(expression_type, _) => match expression_type {
+                UnaryExpressionType::Not | UnaryExpressionType::AsBool => ElaboratedDataType::Bool,
+                UnaryExpressionType::AsByte => ElaboratedDataType::Byte
             }
-            Expression::AsBool(_) | Expression::BoolLiteral(_) | Expression::And(_, _) | Expression::Or(_, _) | Expression::Not(_) | Expression::Equals(_, _) | Expression::NotEquals(_, _) | Expression::GreaterThan(_, _) | Expression::LessThan(_, _) | Expression::GreaterThanEqual(_, _) | Expression::LessThanEqual(_, _)
-                => ElaboratedDataType::Bool,
-                Expression::AsByte(_) => ElaboratedDataType::Byte,
+            Expression::BinaryExpression(expression_type, child1, child2) => match expression_type {
+                BinaryExpressionType::Add | 
+                BinaryExpressionType::Subtract | 
+                BinaryExpressionType::Multiply | 
+                BinaryExpressionType::Divide => {
+    
+                    let type1 = self.get_expression_type(child1)?;
+                    let type2 = self.get_expression_type(child2)?;
+    
+                    // probably not completely correct
+                    if type1 == ElaboratedDataType::Byte {
+                        ElaboratedDataType::Byte
+                    }
+                    else if type1 == ElaboratedDataType::Short {
+                        ElaboratedDataType::Short
+                    }
+                    else {
+                        type2
+                    }
+                }
+                BinaryExpressionType::And | BinaryExpressionType::Or | BinaryExpressionType::Equals | BinaryExpressionType::NotEquals | BinaryExpressionType::GreaterThan | BinaryExpressionType::LessThan | BinaryExpressionType::GreaterThanEqual | BinaryExpressionType::LessThanEqual
+                    => ElaboratedDataType::Bool,
+            }
+            Expression::BoolLiteral(_) => ElaboratedDataType::Bool,
             Expression::NumberLiteral(_) => ElaboratedDataType::GenericNumber,
             Expression::StringLiteral(_) => ElaboratedDataType::GenericString,
-            Expression::EnumVariant(enum_name, _) => ElaboratedDataType::UserEnum(self.user_definitions.enum_name_table[enum_name])
+            Expression::EnumVariant(enum_name, _) => ElaboratedDataType::UserEnum(self.user_definitions.enum_name_table[enum_name]),
+            Expression::MacroInvocation(_, _) => unreachable!()
         })
     }
 
-    fn try_conflate_to_number(&self, expression1: &Expression, expression2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
+    fn try_conflate_to_number(&self, expr1: &Expression, expr2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
 
-        let expr1_type = self.get_expression_type(&expression1)?;
-        let expr2_type = self.get_expression_type(&expression2)?;
+        let expr1_type = self.get_expression_type(expr1)?;
+        let expr2_type = self.get_expression_type(expr2)?;
 
         for data_type in [ElaboratedDataType::Byte, ElaboratedDataType::Short, ElaboratedDataType::GenericNumber] {
             if data_type.can_conflate(&expr1_type) && data_type.can_conflate(&expr2_type) {
@@ -504,24 +550,23 @@ impl Elaborator {
 
     }
 
-    fn try_conflate_to_equateable(&self, expression1: &Expression, expression2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
+    fn try_conflate_to_equateable(&self, expr1: &Expression, expr2: &Expression) -> Result<Option<ElaboratedDataType>, BrainFricError> {
 
-        let expr1_type = self.get_expression_type(&expression1)?;
-        let expr2_type = self.get_expression_type(&expression2)?;
+        let expr1_type = self.get_expression_type(expr1)?;
+        let expr2_type = self.get_expression_type(expr2)?;
 
-        Ok(self.try_conflate_to_number(expression1, expression2)?.or_else(|| {
-            if let (ElaboratedDataType::UserEnum(enum1_id), ElaboratedDataType::UserEnum(enum2_id)) = (expr1_type, expr2_type) && enum1_id == enum2_id {
+        Ok(self.try_conflate_to_number(expr1, expr2)?.or_else(|| match (expr1_type, expr2_type) {
+            (ElaboratedDataType::Bool, ElaboratedDataType::Bool) => Some(ElaboratedDataType::Bool),
+            (ElaboratedDataType::UserEnum(enum1_id), ElaboratedDataType::UserEnum(enum2_id)) if enum1_id == enum2_id => {
                 Some(ElaboratedDataType::UserEnum(enum1_id))
             }
-            else {
-                None
-            }
+            _ => None
         }))
     }
 
     fn elaborate_bool_expression(&mut self, expression: Expression) -> Result<Box<BoolExpression>, BrainFricError> {
 
-        Ok(Box::new(match expression {
+        let bool_expression = match expression {
             Expression::Access(parsed_accessor) => {
 
                 let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
@@ -542,6 +587,7 @@ impl Elaborator {
                         let data_type = self.get_expression_type(&child)?;
 
                         match data_type {
+                            ElaboratedDataType::Bool => *self.elaborate_bool_expression(*child)?,
                             ElaboratedDataType::Byte => BoolExpression::ConvertByte(self.elaborate_byte_expression(*child)?),
                             ElaboratedDataType::Short => BoolExpression::ConvertShort(self.elaborate_short_expression(*child)?),
                             _ => todo!()
@@ -554,27 +600,28 @@ impl Elaborator {
             Expression::BinaryExpression(expression_type, child1, child2) => {
 
                 match expression_type {
-                    BinaryExpressionType::And | BinaryExpressionType::Or => {
+                    BinaryExpressionType::And => BoolExpression::And(
+                        self.elaborate_bool_expression(*child1)?,
+                        self.elaborate_bool_expression(*child2)?
+                    ),
+                    BinaryExpressionType::Or => BoolExpression::Or(
+                        self.elaborate_bool_expression(*child1)?,
+                        self.elaborate_bool_expression(*child2)?
+                    ),
+                    BinaryExpressionType::Equals => {
 
-                        let expr = match expression_type {
-                            BinaryExpressionType::And => BoolExpression::And,
-                            BinaryExpressionType::Or => BoolExpression::Or,
-                            _ => unreachable!()
-                        };
-                        
-                        expr(self.elaborate_bool_expression(*child1)?, self.elaborate_bool_expression(*child2)?)
-
-                    }
-                    BinaryExpressionType::Equals | BinaryExpressionType::NotEquals => {
-
-                        match self.try_conflate_to_equateable(&expr1, &expr2)? {
+                        match self.try_conflate_to_equateable(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteEquals(
-                                self.elaborate_byte_expression(*expr1)?,
-                                self.elaborate_byte_expression(*expr2)?
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
                             ),
                             Some(ElaboratedDataType::Short) => BoolExpression::ShortEquals(
-                                self.elaborate_short_expression(*expr1)?,
-                                self.elaborate_short_expression(*expr2)?
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Bool) => BoolExpression::BoolEquals(
+                                self.elaborate_bool_expression(*child1)?,
+                                self.elaborate_bool_expression(*child2)?
                             ),
                             Some(ElaboratedDataType::UserEnum(enum_id)) => BoolExpression::ByteEquals(
                                 todo!(),
@@ -582,115 +629,160 @@ impl Elaborator {
                             ),
                             _ => todo!()//err!(self.current_todo!())
                         }
+                    }
+                    BinaryExpressionType::NotEquals => {
 
+                        match self.try_conflate_to_equateable(&child1, &child2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteNotEquals(
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortNotEquals(
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Bool) => BoolExpression::BoolNotEquals(
+                                self.elaborate_bool_expression(*child1)?,
+                                self.elaborate_bool_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::UserEnum(enum_id)) => BoolExpression::ByteNotEquals(
+                                todo!(),
+                                todo!()
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
+                    }
+                    BinaryExpressionType::GreaterThan => {
+
+                        match self.try_conflate_to_number(&child1, &child2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThan(
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortGreaterThan(
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
+                    }
+                    BinaryExpressionType::GreaterThanEqual => {
+
+                        match self.try_conflate_to_number(&child1, &child2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThanEqual(
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortGreaterThanEqual(
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
+                    }
+                    BinaryExpressionType::LessThan => {
+                        
+                        match self.try_conflate_to_number(&child1, &child2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThan(
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortLessThan(
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
+                    }
+                    BinaryExpressionType::LessThanEqual => {
+                        
+                        match self.try_conflate_to_number(&child1, &child2)? {
+                            Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThanEqual(
+                                self.elaborate_byte_expression(*child1)?,
+                                self.elaborate_byte_expression(*child2)?
+                            ),
+                            Some(ElaboratedDataType::Short) => BoolExpression::ShortLessThanEqual(
+                                self.elaborate_short_expression(*child1)?,
+                                self.elaborate_short_expression(*child2)?
+                            ),
+                            _ => todo!()//err!(self.current_todo!())
+                        }
                     }
                     _ => todo!()
                 }
             }
-            Expression::Equals(expr1, expr2)
-            => {
-
-                match self.try_conflate_to_equateable(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteEquals(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortEquals(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::UserEnum(enum_id)) => BoolExpression::ByteEquals(
-                        todo!(),
-                        todo!()
-                    ),
-                    _ => todo!()//err!(self.current_todo!())
-                }
-            }
-            Expression::NotEquals(expr1, expr2) => {
-                
-                match self.try_conflate_to_equateable(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteNotEquals(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortNotEquals(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::UserEnum(enum_id)) => BoolExpression::ByteNotEquals(
-                        todo!(),
-                        todo!()
-                    ),
-                    _ => {
-                        println!("{expr1:?} {expr2:?} {:?}", self.try_conflate_to_equateable(&expr1, &expr2)?);
-                        todo!()
-                    }
-                    //_ => todo!()//err!(self.current_todo!())
-                }
-            }
-            Expression::GreaterThan(expr1, expr2) => {
-                
-                match self.try_conflate_to_number(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThan(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortGreaterThan(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    _ => todo!()//err!(self.current_todo!())
-                }
-            }
-            Expression::GreaterThanEqual(expr1, expr2) => {
-                
-                match self.try_conflate_to_number(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThanEqual(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortGreaterThanEqual(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    _ => todo!()//err!(self.current_todo!())
-                }
-            }
-            Expression::LessThan(expr1, expr2) => {
-                
-                match self.try_conflate_to_number(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThan(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortLessThan(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    _ => todo!()//err!(self.current_todo!())
-                }
-            }
-            Expression::LessThanEqual(expr1, expr2) => {
-                
-                match self.try_conflate_to_number(&expr1, &expr2)? {
-                    Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThanEqual(
-                        self.elaborate_byte_expression(*expr1)?,
-                        self.elaborate_byte_expression(*expr2)?
-                    ),
-                    Some(ElaboratedDataType::Short) => BoolExpression::ShortLessThanEqual(
-                        self.elaborate_short_expression(*expr1)?,
-                        self.elaborate_short_expression(*expr2)?
-                    ),
-                    _ => todo!()//err!(self.current_todo!())
-                }
-            }
             _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Bool))
-        }))
+        };
+
+        let folded_expression = match bool_expression {
+
+            BoolExpression::ConvertByte(box ByteExpression::Constant(value))
+                => BoolExpression::Constant(value != 0),
+
+            BoolExpression::ConvertShort(box ShortExpression::Constant(value))
+                => BoolExpression::Constant(value != 0),
+
+            BoolExpression::BoolEquals(box BoolExpression::Constant(a), box BoolExpression::Constant(b))
+                => BoolExpression::Constant(a == b),
+
+            BoolExpression::ByteEquals(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a == b),
+
+            BoolExpression::ShortEquals(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a == b),
+
+            BoolExpression::BoolNotEquals(box BoolExpression::Constant(a), box BoolExpression::Constant(b))
+                => BoolExpression::Constant(a != b),
+
+            BoolExpression::ByteNotEquals(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a != b),
+
+            BoolExpression::ShortNotEquals(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a != b),
+
+            BoolExpression::And(box BoolExpression::Constant(true), other) |
+            BoolExpression::And(other, box BoolExpression::Constant(true)) |
+            BoolExpression::Or(box BoolExpression::Constant(false), other) |
+            BoolExpression::Or(other, box BoolExpression::Constant(false))
+                => *other,
+
+            BoolExpression::Not(box BoolExpression::Constant(value))
+                => BoolExpression::Constant(!value),
+
+            BoolExpression::ByteLessThan(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a < b),
+
+            BoolExpression::ByteGreaterThan(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a > b),
+
+            BoolExpression::ByteLessThanEqual(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a <= b),
+
+            BoolExpression::ByteGreaterThanEqual(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => BoolExpression::Constant(a >= b),
+
+            BoolExpression::ShortLessThan(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a < b),
+
+            BoolExpression::ShortGreaterThan(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a > b),
+
+            BoolExpression::ShortLessThanEqual(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a <= b),
+
+            BoolExpression::ShortGreaterThanEqual(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => BoolExpression::Constant(a >= b),
+
+            _ => bool_expression
+        };
+
+        Ok(Box::new(folded_expression))
+
     }
 
     fn elaborate_byte_expression(&mut self, expression: Expression) -> Result<Box<ByteExpression>, BrainFricError> {
 
-        Ok(Box::new(match expression {
+        let byte_expression = match expression {
             Expression::Access(parsed_accessor) => {
 
                 let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
@@ -702,33 +794,64 @@ impl Elaborator {
             Expression::NumberLiteral(number_value) => {
                 ByteExpression::Constant(number_value as u8)
             }
-            Expression::Add(expr1, expr2)
-                => ByteExpression::Add(
-                    self.elaborate_byte_expression(*expr1)?,
-                    self.elaborate_byte_expression(*expr2)?
-            ),
-            Expression::Subtract(expr1, expr2)
-                => ByteExpression::Subtract(
-                    self.elaborate_byte_expression(*expr1)?,
-                    self.elaborate_byte_expression(*expr2)?
-            ),
-            Expression::Multiply(expr1, expr2)
-                => ByteExpression::Multiply(
-                    self.elaborate_byte_expression(*expr1)?,
-                    self.elaborate_byte_expression(*expr2)?
-            ),
-            Expression::Divide(expr1, expr2)
-                => ByteExpression::Divide(
-                    self.elaborate_byte_expression(*expr1)?,
-                    self.elaborate_byte_expression(*expr2)?
-            ),
+            Expression::UnaryExpression(UnaryExpressionType::AsByte, child) => {
+
+                match self.get_expression_type(&child)? {
+                    ElaboratedDataType::Bool => ByteExpression::ConvertBool(self.elaborate_bool_expression(*child)?),
+                    ElaboratedDataType::Byte => *self.elaborate_byte_expression(*child)?,
+                    _ => todo!()
+                }
+            }
+            Expression::BinaryExpression(expression_type, child1, child2) => {
+
+                let byte_expression1 = self.elaborate_byte_expression(*child1)?;
+                let byte_expression2 = self.elaborate_byte_expression(*child2)?;
+
+                match expression_type {
+                    BinaryExpressionType::Add => ByteExpression::Add(byte_expression1, byte_expression2),
+                    BinaryExpressionType::Subtract => ByteExpression::Subtract(byte_expression1, byte_expression2),
+                    BinaryExpressionType::Multiply => ByteExpression::Multiply(byte_expression1, byte_expression2),
+                    BinaryExpressionType::Divide => ByteExpression::Divide(byte_expression1, byte_expression2),
+                    _ => todo!()
+                }
+            }
             _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
-        }))
+        };
+
+        let folded_expression = match byte_expression {
+
+            ByteExpression::ConvertBool(box BoolExpression::Constant(value))
+                => ByteExpression::Constant(value as u8),
+
+            ByteExpression::ConvertShort(box ShortExpression::Constant(value))
+                => ByteExpression::Constant(value as u8),
+
+            ByteExpression::Add(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => ByteExpression::Constant(a + b),
+
+            ByteExpression::Subtract(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => ByteExpression::Constant(a - b),
+
+            ByteExpression::Multiply(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => ByteExpression::Constant(a * b),
+
+            ByteExpression::Multiply(box ByteExpression::Constant(coefficient), expr) |
+            ByteExpression::Multiply(expr, box ByteExpression::Constant(coefficient))
+                => ByteExpression::ConstMultiply(expr, coefficient),
+
+            ByteExpression::Divide(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => ByteExpression::Constant(a / b),
+
+            _ => byte_expression
+        };
+
+        Ok(Box::new(folded_expression))
+
     }
 
     fn elaborate_short_expression(&mut self, expression: Expression) -> Result<Box<ShortExpression>, BrainFricError> {
 
-        Ok(Box::new(match expression {
+        let short_expression = match expression {
             Expression::Access(parsed_accessor) => {
 
                 let (data_type, accessor) = self.convert_accessor(parsed_accessor)?;
@@ -740,28 +863,41 @@ impl Elaborator {
             Expression::NumberLiteral(number_value) => {
                 ShortExpression::Constant(number_value as u16)
             }
-            Expression::Add(expr1, expr2)
-                => ShortExpression::Add(
-                    self.elaborate_short_expression(*expr1)?,
-                    self.elaborate_short_expression(*expr2)?
-            ),
-            Expression::Subtract(expr2, expr1)
-                => ShortExpression::Subtract(
-                    self.elaborate_short_expression(*expr2)?,
-                    self.elaborate_short_expression(*expr1)?
-            ),
-            Expression::Multiply(expr1, expr2)
-                => ShortExpression::Multiply(
-                    self.elaborate_short_expression(*expr1)?,
-                    self.elaborate_short_expression(*expr2)?
-            ),
-            Expression::Divide(expr1, expr2)
-                => ShortExpression::Divide(
-                    self.elaborate_short_expression(*expr1)?,
-                    self.elaborate_short_expression(*expr2)?
-            ),
+            Expression::BinaryExpression(expression_type, child1, child2) => {
+
+                let short_expression1 = self.elaborate_short_expression(*child1)?;
+                let short_expression2 = self.elaborate_short_expression(*child2)?;
+
+                match expression_type {
+                    BinaryExpressionType::Add => ShortExpression::Add(short_expression1, short_expression2),
+                    BinaryExpressionType::Subtract => ShortExpression::Subtract(short_expression1, short_expression2),
+                    BinaryExpressionType::Multiply => ShortExpression::Multiply(short_expression1, short_expression2),
+                    BinaryExpressionType::Divide => ShortExpression::Divide(short_expression1, short_expression2),
+                    _ => todo!()
+                }
+            }
             _ => err!(ElaborateError::ExpectedTypedExpression(ElaboratedDataType::Byte))
-        }))
+        };
+
+        let folded_expression = match short_expression {
+
+            ShortExpression::Add(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => ShortExpression::Constant(a + b),
+
+            ShortExpression::Subtract(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => ShortExpression::Constant(a - b),
+
+            ShortExpression::Multiply(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => ShortExpression::Constant(a * b),
+
+            ShortExpression::Divide(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => ShortExpression::Constant(a / b),
+
+            _ => short_expression
+        };
+
+        Ok(Box::new(folded_expression))
+
     }
 
     fn elaborate_enum_expression(&mut self, expression: Expression, enum_id: usize) -> Result<Box<ByteExpression>, BrainFricError> {
@@ -872,9 +1008,9 @@ impl Elaborator {
                 }
                 StatementBody::Assign(parsed_accessor, mut expression) => {
 
-                    let (accessor_data_type, accessor) = self.convert_accessor(parsed_accessor)?;
+                    self.resolve_macros(&mut expression)?;
 
-                    self.fold_expression(&mut expression);
+                    let (accessor_data_type, accessor) = self.convert_accessor(parsed_accessor)?;
 
                     // need to check if used accessor is in expression and copy if so
 
@@ -906,7 +1042,7 @@ impl Elaborator {
                 }
                 StatementBody::Write(mut expression) => {
 
-                    self.fold_expression(&mut expression);
+                    self.resolve_macros(&mut expression)?;
 
                     let data_type = self.get_expression_type(&expression)?;
 
@@ -929,9 +1065,7 @@ impl Elaborator {
                     self.current_block.push(statement);
 
                 }
-                StatementBody::WriteAsNum(mut parsed_expression) => {
-
-                    self.fold_expression(&mut parsed_expression);
+                StatementBody::WriteAsNum(parsed_expression) => {
 
                     let data_type = self.get_expression_type(&parsed_expression)?;
 
@@ -955,14 +1089,18 @@ impl Elaborator {
                     self.current_block.push(ElaboratedStatement::ReadByte(accessor));
                 
                 }
-                StatementBody::While(expression, block) => {
+                StatementBody::While(mut expression, block) => {
+
+                    self.resolve_macros(&mut expression)?;
 
                     let expr = *self.elaborate_bool_expression(expression)?;
                     let loop_block = self.elaborate_block(block)?;
 
                     self.current_block.push(ElaboratedStatement::While(expr, loop_block));
                 }
-                StatementBody::If(expression, then_block, else_block) => {
+                StatementBody::If(mut expression, then_block, else_block) => {
+
+                    self.resolve_macros(&mut expression)?;
 
                     let expr = *self.elaborate_bool_expression(expression)?;
                     let then = self.elaborate_block(then_block)?;

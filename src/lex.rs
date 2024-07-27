@@ -187,7 +187,8 @@ impl Token {
             Self::BoolLiteral(_) |
             Self::IntegerLiteral(_) |
             Self::CharLiteral(_) |
-            Self::StringLiteral(_)
+            Self::StringLiteral(_) |
+            Self::Dollar
         )
     }
 

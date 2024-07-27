@@ -44,11 +44,13 @@ pub enum ParseError {
     ExpectedCloseParen,
     ExpectedCloseSquare,
     ExpectedCloseAngle,
+    ExpectedEqual,
     ExpectedNumberLiteral,
     ExpectedMatchArm,
     ExpectedName,
     ExpectedEnd,
     ExpectedNewline,
+    ExpectedIdentifier,
     MultipleDefaultArms
 }
 
@@ -65,11 +67,13 @@ impl ErrorDesc for ParseError {
             Self::ExpectedCloseParen => "Expected ')'",
             Self::ExpectedCloseSquare => "Expected ']'",
             Self::ExpectedCloseAngle => "Expected '>'",
+            Self::ExpectedEqual => "Expected '='",
             Self::ExpectedNumberLiteral => "Expected number literal",
             Self::ExpectedMatchArm => "Expected match arm",
             Self::ExpectedName => "Expected name",
             Self::ExpectedEnd => "Expected end statement to block",
             Self::ExpectedNewline => "Expected new line",
+            Self::ExpectedIdentifier => "Expected identifier",
             Self::MultipleDefaultArms => "Multiple default arms"
         })
     }
@@ -80,6 +84,7 @@ pub enum ElaborateError {
     UnknownType(Name),
     UnknownEnum(Name),
     UnknownEnumVariant(Name, Name),
+    UnknownMacro(Name),
     StringLiteralTooLarge(Rc<str>, usize),
     TypeMismatch(ElaboratedDataType, ElaboratedDataType),
     NestedComplexType,
@@ -87,7 +92,8 @@ pub enum ElaborateError {
     ExpectedTypedExpression(ElaboratedDataType),
     OutOfBoundsAccess,
     ShiftTooLarge,
-    InvalidTypeParameters
+    InvalidTypeParameters,
+    MismatchedArgumentCount
 }
 
 impl ErrorDesc for ElaborateError {
@@ -102,6 +108,8 @@ impl ErrorDesc for ElaborateError {
                 format!("Unknown enum \"{enum_name}\""),
             Self::UnknownEnumVariant(enum_name, variant_name) => 
                 format!("Unknown enum variant \"{enum_name}::{variant_name}\""),
+            Self::UnknownMacro(macro_name) => 
+                format!("Unknown macro \"{macro_name}\""),
             Self::StringLiteralTooLarge(literal, max_size) =>
                 format!("String literal too large \"{literal}\", max size: {max_size}"),
             Self::TypeMismatch(expected_type, got_type) =>  
@@ -117,7 +125,9 @@ impl ErrorDesc for ElaborateError {
             Self::ShiftTooLarge =>
                 "Shift is too large for sequence size".to_string(),
             Self::InvalidTypeParameters =>
-                "Invalid type parameters".to_string()
+                "Invalid type parameters".to_string(),
+            Self::MismatchedArgumentCount =>
+                "Wrong argument count provided for macro".to_string()
         })
     }
 }

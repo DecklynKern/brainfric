@@ -167,7 +167,7 @@ pub enum IRStatement {
     Alloc(Allocation),
     Free(Identifier),
     AddConst(Pointer, u8),
-    MoveCell(Box<[(Pointer, bool)]>, Pointer),
+    MoveCell(Box<[(Pointer, i8)]>, Pointer),
     WriteByte(Pointer),
     WriteByteSequence(Pointer, usize),
     WriteByteAsNumber {temp_block: TempBlock<6>},
@@ -254,7 +254,10 @@ impl IRGenerator {
     fn do_move_raw<const N: usize>(&mut self, to: [(Pointer, bool); N], from: Pointer) {
         self.ir.0.push(IRStatement::MoveCell(
             to.into_iter()
-                .map(|(mem, negate)| (mem, negate))
+                .map(|(mem, negate)| (
+                    mem,
+                    if negate {-1} else {1}
+                ))
                 .collect(),
             from)
         )
@@ -262,7 +265,11 @@ impl IRGenerator {
 
     fn do_move<const N: usize>(&mut self, to: [Pointer; N], from: Pointer, negate: bool) {
         self.ir.0.push(IRStatement::MoveCell(
-            to.into_iter().map(|mem| (mem, negate)).collect(),
+            to.into_iter().map(
+                |mem| (
+                    mem, 
+                    if negate {-1} else {1}
+                )).collect(),
             from
         ));
     }
@@ -591,6 +598,10 @@ impl IRGenerator {
                 let id = self.resolve_accessor(accessor);
                 self.do_copy(into_ptr, id, false);
             }
+            ByteExpression::ConvertBool(expr) => {
+                assert!(!negate); // fix when not lazy
+                self.evaluate_bool_expression_into(*expr, into);
+            }
             ByteExpression::Constant(value) => {
                 if negate {
                     self.do_sub_const(into_ptr, value);
@@ -622,6 +633,13 @@ impl IRGenerator {
                         self.do_sub_const(temp2, 1);
 
                     });
+                });
+            }
+            ByteExpression::ConstMultiply(expr, coefficient) => {
+
+                with_temp!(self, temp, {
+                    self.evaluate_byte_expression_into(*expr, temp, negate);
+                    self.ir.0.push(IRStatement::MoveCell(Box::new([(into, coefficient as i8)]), temp))
                 });
             }
             _ => todo!()
