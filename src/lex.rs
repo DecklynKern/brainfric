@@ -7,7 +7,7 @@ use std::iter::Peekable;
 
 pub type Name = Rc<str>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
 
     Comment,
@@ -68,7 +68,7 @@ pub enum Token {
     GreaterThanEqual,
 
     Question,
-    Pound,
+    Octothorpe,
     Exclamation,
 
     Colon,
@@ -86,7 +86,8 @@ pub enum Token {
     Dot,
     Ampersand,
     Pipe,
-    Dollar
+    Dollar,
+    Percent
 
 }
 
@@ -139,7 +140,7 @@ impl Token {
             "<=" => Self::LessThanEqual,
             ">=" => Self::GreaterThanEqual,
             "?" => Self::Question,
-            "#" => Self::Pound,
+            "#" => Self::Octothorpe,
             "!" => Self::Exclamation,
             ":" => Self::Colon,
             "::" => Self::DoubleColon,
@@ -155,6 +156,7 @@ impl Token {
             "&" => Self::Ampersand,
             "|" => Self::Pipe,
             "$" => Self::Dollar,
+            "%" => Self::Percent,
             _ => return None
         })
     }
@@ -174,7 +176,6 @@ impl Token {
 
     pub fn is_specifier_head(&self) -> bool {
         matches!(self,
-            Self::At |
             Self::Dot |
             Self::Exclamation |
             Self::OpenSquare
@@ -189,14 +190,6 @@ impl Token {
             Self::CharLiteral(_) |
             Self::StringLiteral(_) |
             Self::Dollar
-        )
-    }
-
-    pub fn is_unary_operator(&self) -> bool {
-        matches!(self,
-            Self::Question |
-            Self::Pound |
-            Self::Exclamation
         )
     }
 }

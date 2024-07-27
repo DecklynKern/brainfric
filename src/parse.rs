@@ -7,19 +7,6 @@ use crate::error::*;
 use crate::err;
 use crate::lex::*;
 
-macro_rules! expect_token {
-    ($tokens: expr, $token: pat) => {
-        expect_token!($tokens, $token, {})
-    };
-    
-    ($tokens: expr, $token: pat, $if_token: block) => {
-        if let Some($token) = $tokens.next() $if_token
-        else {
-            return None;
-        }
-    };
-}
-
 #[derive(Debug)]
 pub enum Definition {
     Enum(Name, Vec<(Name, u8)>),
@@ -95,14 +82,25 @@ pub enum MatchArm {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum UnaryExpressionType {
+pub enum UnaryOperator {
     Not,
     AsBool,
     AsByte
 }
 
+impl UnaryOperator {
+    pub fn try_parse(token: &Token) -> Option<Self> {
+        Some(match token {
+            Token::Exclamation => Self::Not,
+            Token::Question => Self::AsBool,
+            Token::Octothorpe => Self::AsByte,
+            _ => return None
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum BinaryExpressionType {
+pub enum BinaryOperator {
     Equals,
     NotEquals,
     LessThan,
@@ -114,7 +112,36 @@ pub enum BinaryExpressionType {
     Add,
     Subtract,
     Multiply,
-    Divide
+    Divide,
+    Modulo
+}
+
+impl BinaryOperator {
+
+    pub fn try_parse_precedence_1(token: &Token) -> Option<Self> {
+        Some(match token {
+            Token::Equal => Self::Equals,
+            Token::NotEqual => Self::NotEquals,
+            Token::OpenAngle => Self::LessThan,
+            Token::CloseAngle => Self::GreaterThan,
+            Token::LessThanEqual => Self::LessThanEqual,
+            Token::GreaterThanEqual => Self::GreaterThanEqual,
+            Token::Plus => Self::Add,
+            Token::Hypen => Self::Subtract,
+            Token::Ampersand => Self::And,
+            Token::Pipe => Self::Or,
+            _ => return None
+        })
+    }
+    
+    pub fn try_parse_precedence_2(token: &Token) -> Option<Self> {
+        Some(match token {
+            Token::Star => Self::Multiply,
+            Token::ForwardSlash => Self::Divide,
+            Token::Percent => Self::Modulo,
+            _ => return None
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -126,8 +153,8 @@ pub enum Expression {
     NumberLiteral(i32),
     StringLiteral(Rc<str>),
 
-    UnaryExpression(UnaryExpressionType, Box<Expression>),
-    BinaryExpression(BinaryExpressionType, Box<Expression>, Box<Expression>),
+    UnaryExpression(UnaryOperator, Box<Expression>),
+    BinaryExpression(BinaryOperator, Box<Expression>, Box<Expression>),
 
     MacroInvocation(Name, Box<[Expression]>)
 
@@ -142,23 +169,12 @@ impl Expression {
 
                 if accessor.specifiers.is_empty() {
 
-                    let mut i = 0;
-
-                    loop {
-
-                        if i >= parameters.len() {
-                            return;
-                        }
-                        
-                        if parameters[i] == accessor.name {
-                            break;
-                        }
-
-                        i += 1;
-
+                    let Some(idx) = parameters.iter().position(|param| *param == accessor.name)
+                    else {
+                        return;
                     };
 
-                    i
+                    idx
 
                 }
                 else {
@@ -396,49 +412,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn try_parse_binary_operator_precedence_2(&mut self) -> Option<BinaryExpressionType> {
-
-        let Some(op_token) = self.tokens.peek() else {
-            return None;
-        };
-
-        let op_func = match op_token {
-            Token::Star => BinaryExpressionType::Multiply,
-            Token::ForwardSlash => BinaryExpressionType::Divide,
-            _ => return None
-        };
-
-        self.tokens.next();
-        Some(op_func)
-
-    }
-
-    fn try_parse_binary_operator_precedence_1(&mut self) -> Option<BinaryExpressionType> {
-
-        let Some(op_token) = self.tokens.peek()
-        else {
-            return None;
-        };
-
-        let op_func = match op_token {
-            Token::Equal => BinaryExpressionType::Equals,
-            Token::NotEqual => BinaryExpressionType::NotEquals,
-            Token::OpenAngle => BinaryExpressionType::LessThan,
-            Token::CloseAngle => BinaryExpressionType::GreaterThan,
-            Token::LessThanEqual => BinaryExpressionType::LessThanEqual,
-            Token::GreaterThanEqual => BinaryExpressionType::GreaterThanEqual,
-            Token::Plus => BinaryExpressionType::Add,
-            Token::Hypen => BinaryExpressionType::Subtract,
-            Token::Ampersand => BinaryExpressionType::And,
-            Token::Pipe => BinaryExpressionType::Or,
-            _ => return None
-        };
-
-        self.tokens.next();
-        Some(op_func)
-
-    }
-
     fn parse_factor(&mut self) -> Result<Expression, BrainFricError> {
 
         let Some(token) = self.tokens.next()
@@ -511,42 +484,42 @@ impl<'a> Parser<'a> {
 
     fn parse_term(&mut self) -> Result<Expression, BrainFricError> {
 
-        let Some(token) = self.tokens.peek()
+        let Some(token) = self.tokens.peek().cloned()
         else {
             err!(ParseError::InvalidExpression);
         };
 
-        if token.is_unary_operator() {
+        if let Some(operator) = UnaryOperator::try_parse(&token) {
 
-            let op = self.tokens.next().unwrap();
+            self.tokens.next();
+
             let factor = self.parse_factor()?;
 
-            Ok(Expression::UnaryExpression(
-                match op {
-                    Token::Question => UnaryExpressionType::AsBool,
-                    Token::Pound => UnaryExpressionType::AsByte,
-                    Token::Exclamation => UnaryExpressionType::Not,
-                    _ => unreachable!()
-                },
-                Box::new(factor)
-            ))
+            Ok(Expression::UnaryExpression(operator, Box::new(factor)))
+            
         }
         else {
 
             let factor1 = self.parse_factor()?;
 
-            let Some(expression_type) = self.try_parse_binary_operator_precedence_2()
+            let Some(operator) = self.tokens.peek().cloned().and_then(BinaryOperator::try_parse_precedence_2)
             else {
                 return Ok(factor1);
             };
 
+            self.tokens.next();
+
             let factor2 = self.parse_factor()?;
 
-            let mut expr = Expression::BinaryExpression(expression_type, Box::new(factor1), Box::new(factor2));
+            let mut expr = Expression::BinaryExpression(operator, Box::new(factor1), Box::new(factor2));
 
-            while let Some(next_expression_type) = self.try_parse_binary_operator_precedence_2() {
+            while let Some(next_operator) = self.tokens.peek().cloned().and_then(BinaryOperator::try_parse_precedence_2) {
+
+                self.tokens.next();
+
                 let next_factor = self.parse_factor()?;
-                expr = Expression::BinaryExpression(next_expression_type, Box::new(expr), Box::new(next_factor));
+                expr = Expression::BinaryExpression(next_operator, Box::new(expr), Box::new(next_factor));
+
             }
 
             Ok(expr)
@@ -559,18 +532,24 @@ impl<'a> Parser<'a> {
 
         let term1 = self.parse_term()?;
 
-        let Some(expression_type) = self.try_parse_binary_operator_precedence_1()
+        let Some(operator) = self.tokens.peek().cloned().and_then(BinaryOperator::try_parse_precedence_1)
         else {
             return Ok(term1);
         };
 
+        self.tokens.next();
+
         let term2 = self.parse_term()?;
 
-        let mut expr = Expression::BinaryExpression(expression_type, Box::new(term1), Box::new(term2));
+        let mut expr = Expression::BinaryExpression(operator, Box::new(term1), Box::new(term2));
 
-        while let Some(next_expression_type) = self.try_parse_binary_operator_precedence_1() {
+        while let Some(next_operator) = self.tokens.peek().cloned().and_then(BinaryOperator::try_parse_precedence_1) {
+
+            self.tokens.next();
+
             let next_term = self.parse_term()?;
-            expr = Expression::BinaryExpression(next_expression_type, Box::new(expr), Box::new(next_term));
+            expr = Expression::BinaryExpression(next_operator, Box::new(expr), Box::new(next_term));
+            
         }
 
         Ok(expr)

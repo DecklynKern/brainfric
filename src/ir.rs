@@ -136,6 +136,17 @@ macro_rules! with_temp {
     }
 }
 
+macro_rules! with_temp_block {
+
+    ($self: ident, $temp: ident, $block: block) => {
+        {
+            let $temp = $self.allocate_temporary_block();
+            $block
+            $self.free_block($temp);
+        }
+    }
+}
+
 macro_rules! do_while {
     ($self: ident, $id: ident, $block: block) => {
         $self.do_begin_loop();
@@ -168,12 +179,13 @@ pub enum IRStatement {
     Free(Identifier),
     AddConst(Pointer, u8),
     MoveCell(Box<[(Pointer, i8)]>, Pointer),
+    Modulo(TempBlock<6>),
+    Compare(TempBlock<5>), // less than or equal
     WriteByte(Pointer),
     WriteByteSequence(Pointer, usize),
     WriteByteAsNumber {temp_block: TempBlock<6>},
     WriteShortAsNumber {ptr: Pointer, temp_block: TempBlock<9>},
     ReadByte(Pointer),
-    Compare(TempBlock<5>), // less than or equal
     Loop(Pointer, IRBlock, bool),
     Switch {temp_block: TempBlock<2>, arms: Vec<(u8, IRBlock)>, default: Option<IRBlock>},
     StackPush(Pointer, usize),
@@ -202,8 +214,12 @@ struct IRGenerator {
 
 impl IRGenerator {
 
+    fn push_statement(&mut self, statement: IRStatement) {
+        self.ir.0.push(statement);
+    }
+
     fn do_free(&mut self, id: Identifier) {
-        self.ir.0.push(IRStatement::Free(id));
+        self.push_statement(IRStatement::Free(id));
     }
 
     fn free_block<const N: usize>(&mut self, block: TempBlock<N>) {
@@ -212,7 +228,7 @@ impl IRGenerator {
         //     self.do_clear_byte(block.at(i));
         // }
 
-        self.ir.0.push(IRStatement::Free(block.id));
+        self.push_statement(IRStatement::Free(block.id));
     
     }
 
@@ -225,7 +241,7 @@ impl IRGenerator {
         let id = self.next_identifier;
         self.next_identifier += 1;
         
-        self.ir.0.push(IRStatement::Alloc(Allocation::temporary(id, N)));
+        self.push_statement(IRStatement::Alloc(Allocation::temporary(id, N)));
 
         TempBlock::<N> {id}
 
@@ -252,7 +268,7 @@ impl IRGenerator {
     }
 
     fn do_move_raw<const N: usize>(&mut self, to: [(Pointer, bool); N], from: Pointer) {
-        self.ir.0.push(IRStatement::MoveCell(
+        self.push_statement(IRStatement::MoveCell(
             to.into_iter()
                 .map(|(mem, negate)| (
                     mem,
@@ -264,7 +280,7 @@ impl IRGenerator {
     }
 
     fn do_move<const N: usize>(&mut self, to: [Pointer; N], from: Pointer, negate: bool) {
-        self.ir.0.push(IRStatement::MoveCell(
+        self.push_statement(IRStatement::MoveCell(
             to.into_iter().map(
                 |mem| (
                     mem, 
@@ -285,12 +301,12 @@ impl IRGenerator {
     }
 
     fn do_clear_byte(&mut self, ptr: Pointer) {
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), ptr));
+        self.push_statement(IRStatement::MoveCell(Box::default(), ptr));
     }
 
     fn do_add_const(&mut self, ptr: Pointer, val: u8) {
         if val != 0 {
-            self.ir.0.push(IRStatement::AddConst(ptr, val));
+            self.push_statement(IRStatement::AddConst(ptr, val));
         }
     }
 
@@ -299,16 +315,13 @@ impl IRGenerator {
     }
 
     fn do_write_byte(&mut self, ptr: Pointer) {
-        self.ir.0.push(IRStatement::WriteByte(ptr));
+        self.push_statement(IRStatement::WriteByte(ptr));
     }
 
     fn do_write_short_as_number(&mut self, ptr: Pointer) {
-
-        let temp_block = self.allocate_temporary_block();
-        self.ir.0.push(IRStatement::WriteShortAsNumber {ptr, temp_block});
-
-        self.free_block(temp_block);
-
+        with_temp_block!(self, temp_block, {
+            self.push_statement(IRStatement::WriteShortAsNumber {ptr, temp_block});
+        });
     }
 
     // assume temp is 0
@@ -359,35 +372,33 @@ impl IRGenerator {
 
     fn move_low_byte_to_short<const N: usize>(&mut self, short_ptr: Pointer, low_ptr: Pointer, copies: [(Pointer, bool); N]) where [(); N + 2]: {
 
-        let temp_block = self.allocate_temporary_block();
+        with_temp_block!(self, temp_block, {
 
-        with_temp!(self, temp, {
-
-            let true_copies: [(Pointer, bool); N + 2] =
-                [(temp_block.at(2), false), (short_ptr, false)]
-                .iter()
-                .chain(copies.iter())
-                .cloned()
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
-
-            self.do_move_raw(true_copies, low_ptr);
-            self.do_move([low_ptr], temp, false);
-
+            with_temp!(self, temp, {
+    
+                let true_copies: [(Pointer, bool); N + 2] =
+                    [(temp_block.at(2), false), (short_ptr, false)]
+                    .iter()
+                    .chain(copies.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+    
+                self.do_move_raw(true_copies, low_ptr);
+                self.do_move([low_ptr], temp, false);
+    
+            });
+            
+            self.do_copy(temp_block.at(1), short_ptr, true);
+            self.do_sub_const(temp_block.at(1), 1);
+    
+            self.push_statement(IRStatement::Compare(temp_block));
+    
+            do_if!(self, temp_block.at(0), {
+                self.do_add_const(short_ptr.with_offset(1), 1);
+            });
         });
-        
-        self.do_copy(temp_block.at(1), short_ptr, true);
-        self.do_sub_const(temp_block.at(1), 1);
-
-        self.ir.0.push(IRStatement::Compare(temp_block));
-
-        do_if!(self, temp_block.at(0), {
-            self.do_add_const(short_ptr.with_offset(1), 1);
-        });
-
-        self.free_block(temp_block);
-
     }
 
     fn do_add_const_short(&mut self, ptr: Pointer, val: u16) {
@@ -406,8 +417,8 @@ impl IRGenerator {
 
     fn do_clear_short(&mut self, ptr: Pointer) {
 
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), ptr));
-        self.ir.0.push(IRStatement::MoveCell(Box::default(), ptr.with_offset(1)));
+        self.push_statement(IRStatement::MoveCell(Box::default(), ptr));
+        self.push_statement(IRStatement::MoveCell(Box::default(), ptr.with_offset(1)));
     
     }
 
@@ -435,7 +446,7 @@ impl IRGenerator {
     fn do_end_loop(&mut self, ptr: Pointer, is_if: bool) {
         let ir = take(&mut self.ir);
         self.pop_ir_from_stack();
-        self.ir.0.push(IRStatement::Loop(ptr, ir, is_if));
+        self.push_statement(IRStatement::Loop(ptr, ir, is_if));
     }
 
     fn evaluate_bool_expression_into(&mut self, expression: BoolExpression, into: Pointer) {
@@ -529,61 +540,56 @@ impl IRGenerator {
             }
             BoolExpression::ByteGreaterThan(expr1, expr2) => {
 
-                let temp_block = self.allocate_temporary_block();
+                with_temp_block!(self, temp_block, {
                 
-                self.evaluate_byte_expression_into(*expr1, temp_block.at(1), false);
-                self.evaluate_byte_expression_into(*expr2, temp_block.at(2), false);
-
-                self.ir.0.push(IRStatement::Compare(temp_block));
-
-                self.do_move([into], temp_block.at(0), true);
-                self.do_add_const(into, 1);
-
-                self.free_block(temp_block);
-
+                    self.evaluate_byte_expression_into(*expr1, temp_block.at(1), false);
+                    self.evaluate_byte_expression_into(*expr2, temp_block.at(2), false);
+    
+                    self.push_statement(IRStatement::Compare(temp_block));
+    
+                    self.do_move([into], temp_block.at(0), true);
+                    self.do_add_const(into, 1);
+                });
             }
             BoolExpression::ByteLessThan(expr1, expr2) => {
 
-                let temp_block = self.allocate_temporary_block();
-                
-                self.evaluate_byte_expression_into(*expr2, temp_block.at(1), false);
-                self.evaluate_byte_expression_into(*expr1, temp_block.at(2), false);
+                with_temp_block!(self, temp_block, {
+                    
+                    self.evaluate_byte_expression_into(*expr2, temp_block.at(1), false);
+                    self.evaluate_byte_expression_into(*expr1, temp_block.at(2), false);
 
-                self.ir.0.push(IRStatement::Compare(temp_block));
+                    self.push_statement(IRStatement::Compare(temp_block));
 
-                self.do_move([into], temp_block.at(0), true);
-                self.do_add_const(into, 1);
+                    self.do_move([into], temp_block.at(0), true);
+                    self.do_add_const(into, 1);
 
-                self.free_block(temp_block);
-
+                });
             }
             BoolExpression::ByteGreaterThanEqual(expr1, expr2) => {
 
-                let temp_block = self.allocate_temporary_block();
-                
-                self.evaluate_byte_expression_into(*expr2, temp_block.at(1), false);
-                self.evaluate_byte_expression_into(*expr1, temp_block.at(2), false);
+                with_temp_block!(self, temp_block, {
+                    
+                    self.evaluate_byte_expression_into(*expr2, temp_block.at(1), false);
+                    self.evaluate_byte_expression_into(*expr1, temp_block.at(2), false);
 
-                self.ir.0.push(IRStatement::Compare(temp_block));
+                    self.push_statement(IRStatement::Compare(temp_block));
 
-                self.do_move([into], temp_block.at(0), false);
+                    self.do_move([into], temp_block.at(0), false);
 
-                self.free_block(temp_block);
-
+                });
             }
             BoolExpression::ByteLessThanEqual(expr1, expr2) => {
 
-                let temp_block = self.allocate_temporary_block();
-                
-                self.evaluate_byte_expression_into(*expr1, temp_block.at(1), false);
-                self.evaluate_byte_expression_into(*expr2, temp_block.at(2), false);
+                with_temp_block!(self, temp_block, {
 
-                self.ir.0.push(IRStatement::Compare(temp_block));
+                    self.evaluate_byte_expression_into(*expr1, temp_block.at(1), false);
+                    self.evaluate_byte_expression_into(*expr2, temp_block.at(2), false);
 
-                self.do_move([into], temp_block.at(0), false);
+                    self.push_statement(IRStatement::Compare(temp_block));
 
-                self.free_block(temp_block);
+                    self.do_move([into], temp_block.at(0), false);
 
+                });
             }
             _ => todo!()
         }
@@ -639,7 +645,19 @@ impl IRGenerator {
 
                 with_temp!(self, temp, {
                     self.evaluate_byte_expression_into(*expr, temp, negate);
-                    self.ir.0.push(IRStatement::MoveCell(Box::new([(into, coefficient as i8)]), temp))
+                    self.push_statement(IRStatement::MoveCell(Box::new([(into, coefficient as i8)]), temp))
+                });
+            }
+            ByteExpression::Modulo(expr1, expr2) => {
+
+                with_temp_block!(self, temp_block, {
+
+                    self.evaluate_byte_expression_into(*expr1, temp_block.at(1), false);
+                    self.evaluate_byte_expression_into(*expr2, temp_block.at(2), false);
+                
+                    self.push_statement(IRStatement::Modulo(temp_block));
+                    self.do_move([into], temp_block.at(3), false);
+                
                 });
             }
             _ => todo!()
@@ -690,7 +708,7 @@ impl IRGenerator {
                     // fix
                     assert!(name_id == self.name_table.len());
             
-                    self.ir.0.push(IRStatement::Alloc(Allocation::variable(self.next_identifier, size)));
+                    self.push_statement(IRStatement::Alloc(Allocation::variable(self.next_identifier, size)));
             
                     self.name_table.push(self.next_identifier);
                     self.next_identifier += 1;
@@ -768,25 +786,16 @@ impl IRGenerator {
                     }
                 }
                 ElaboratedStatement::WriteByteAsNum(expression) => {
-        
-                    let temp_block = self.allocate_temporary_block();
-
-                    self.evaluate_byte_expression_into(expression, temp_block.at(0), false);
-
-                    self.ir.0.push(IRStatement::WriteByteAsNumber {temp_block});
-        
-                    self.free_block(temp_block);
-
+                    with_temp_block!(self, temp_block, {
+                        self.evaluate_byte_expression_into(expression, temp_block.at(0), false);
+                        self.push_statement(IRStatement::WriteByteAsNumber {temp_block});
+                    });
                 }
                 ElaboratedStatement::WriteShortAsNum(expression) => {
-
-                    let temp = self.allocate_temporary_block::<2>();
-
-                    self.evaluate_short_expression_into(expression, temp.at(0), false);
-                    self.do_write_short_as_number(temp.at(0));
-
-                    self.free_block(temp);
-
+                    with_temp!(self, temp, {
+                        self.evaluate_short_expression_into(expression, temp, false);
+                        self.do_write_short_as_number(temp);
+                    });
                 }
                 ElaboratedStatement::WriteByteSequence(accessor, length) => {
                     let id = self.resolve_accessor(accessor);
@@ -797,7 +806,7 @@ impl IRGenerator {
                 }
                 ElaboratedStatement::ReadByte(accessor) => {
                     let id = self.resolve_accessor(accessor);
-                    self.ir.0.push(IRStatement::ReadByte(id));
+                    self.push_statement(IRStatement::ReadByte(id));
                 }
                 ElaboratedStatement::While(expression, loop_statements) => {
 
@@ -870,51 +879,49 @@ impl IRGenerator {
                 }
                 ElaboratedStatement::Switch(expression, mut arms, default_statements) => {
 
-                    let temp_block = self.allocate_temporary_block();
-
-                    self.evaluate_byte_expression_into(expression, temp_block.at(1), false);
-
-                    arms.sort_by(|(case1, _), (case2, _)| {
-                        case1.cmp(case2)
+                    with_temp_block!(self, temp_block, {
+    
+                        self.evaluate_byte_expression_into(expression, temp_block.at(1), false);
+    
+                        arms.sort_by(|(case1, _), (case2, _)| {
+                            case1.cmp(case2)
+                        });
+    
+                        self.push_ir_to_stack();
+    
+                        // add into_iter when rust 0.80 comes out
+                        let arm_ir_blocks: Vec<(u8, IRBlock)> = Vec::from(arms).into_iter().map(|(case, block)| {
+    
+                            if case == 0 {
+                                panic!("zero case not supported yet");
+                            }
+    
+                            let ir = self.generate_ir(block);
+                            (case, ir)
+                            
+                        }).collect();
+    
+                        let default = match default_statements {
+                            Some(statements) => {
+                                Some(self.generate_ir(statements))
+                            }
+                            None => None
+                        };
+    
+                        self.pop_ir_from_stack();
+    
+                        self.push_statement(IRStatement::Switch {
+                            temp_block,
+                            arms: arm_ir_blocks,
+                            default
+                        });
                     });
-
-                    self.push_ir_to_stack();
-
-                    // add into_iter when rust 0.80 comes out
-                    let arm_ir_blocks: Vec<(u8, IRBlock)> = Vec::from(arms).into_iter().map(|(case, block)| {
-
-                        if case == 0 {
-                            panic!("zero case not supported yet");
-                        }
-
-                        let ir = self.generate_ir(block);
-                        (case, ir)
-                        
-                    }).collect();
-
-                    let default = match default_statements {
-                        Some(statements) => {
-                            Some(self.generate_ir(statements))
-                        }
-                        None => None
-                    };
-
-                    self.pop_ir_from_stack();
-
-                    self.ir.0.push(IRStatement::Switch {
-                        temp_block,
-                        arms: arm_ir_blocks,
-                        default
-                    });
-
-                    self.free_block(temp_block);
-                    
                 }
                 ElaboratedStatement::StackPush(id, size) => {
-                    self.ir.0.push(IRStatement::StackPush(self.name_table[id].into(), size));
+                    self.push_statement(IRStatement::StackPush(self.name_table[id].into(), size));
                 }
                 ElaboratedStatement::StackPop(id, size) => {
-                    self.ir.0.push(IRStatement::StackPop(self.name_table[id].into(), size));
+                    self.push_statement(IRStatement::StackPop(self.name_table[id].into(), size));
                 }
                 _ => todo!("unimplemented statement type")
             }

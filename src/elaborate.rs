@@ -273,6 +273,7 @@ pub enum ByteExpression {
     ConstMultiply(Box<ByteExpression>, u8),
     Multiply(Box<ByteExpression>, Box<ByteExpression>),
     Divide(Box<ByteExpression>, Box<ByteExpression>),
+    Modulo(Box<ByteExpression>, Box<ByteExpression>),
 
     ConvertBool(Box<BoolExpression>),
     ConvertShort(Box<ShortExpression>)
@@ -289,6 +290,7 @@ pub enum ShortExpression {
     Subtract(Box<ShortExpression>, Box<ShortExpression>),
     Multiply(Box<ShortExpression>, Box<ShortExpression>),
     Divide(Box<ShortExpression>, Box<ShortExpression>),
+    Modulo(Box<ShortExpression>, Box<ShortExpression>),
 
 }
 
@@ -317,8 +319,8 @@ pub enum ElaboratedStatement {
     ReadByte(ElaboratedAccessor),
     While(BoolExpression, ElaboratedBlock),
     If(BoolExpression, ElaboratedBlock, Option<ElaboratedBlock>),
-    Switch(ByteExpression, Box<[(u8, ElaboratedBlock)]>, Option<ElaboratedBlock>),
     // need to make this horrible mess better
+    Switch(ByteExpression, Box<[(u8, ElaboratedBlock)]>, Option<ElaboratedBlock>),
     StackPush(NameID, usize),
     StackPop(NameID, usize)
 }
@@ -500,15 +502,16 @@ impl Elaborator {
     fn get_expression_type(&self, expression: &Expression) -> Result<ElaboratedDataType, BrainFricError> {
         Ok(match expression {
             Expression::Access(accessor) => self.get_accessor_type(&accessor)?,
-            Expression::UnaryExpression(expression_type, _) => match expression_type {
-                UnaryExpressionType::Not | UnaryExpressionType::AsBool => ElaboratedDataType::Bool,
-                UnaryExpressionType::AsByte => ElaboratedDataType::Byte
+            Expression::UnaryExpression(operator, _) => match operator {
+                UnaryOperator::Not | UnaryOperator::AsBool => ElaboratedDataType::Bool,
+                UnaryOperator::AsByte => ElaboratedDataType::Byte
             }
-            Expression::BinaryExpression(expression_type, child1, child2) => match expression_type {
-                BinaryExpressionType::Add | 
-                BinaryExpressionType::Subtract | 
-                BinaryExpressionType::Multiply | 
-                BinaryExpressionType::Divide => {
+            Expression::BinaryExpression(operator, child1, child2) => match operator {
+                BinaryOperator::Add | 
+                BinaryOperator::Subtract | 
+                BinaryOperator::Multiply | 
+                BinaryOperator::Divide |
+                BinaryOperator::Modulo => {
     
                     let type1 = self.get_expression_type(child1)?;
                     let type2 = self.get_expression_type(child2)?;
@@ -524,8 +527,8 @@ impl Elaborator {
                         type2
                     }
                 }
-                BinaryExpressionType::And | BinaryExpressionType::Or | BinaryExpressionType::Equals | BinaryExpressionType::NotEquals | BinaryExpressionType::GreaterThan | BinaryExpressionType::LessThan | BinaryExpressionType::GreaterThanEqual | BinaryExpressionType::LessThanEqual
-                    => ElaboratedDataType::Bool,
+                BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Equals | BinaryOperator::NotEquals | BinaryOperator::GreaterThan | BinaryOperator::LessThan | BinaryOperator::GreaterThanEqual | BinaryOperator::LessThanEqual
+                    => ElaboratedDataType::Bool
             }
             Expression::BoolLiteral(_) => ElaboratedDataType::Bool,
             Expression::NumberLiteral(_) => ElaboratedDataType::GenericNumber,
@@ -578,11 +581,11 @@ impl Elaborator {
             Expression::BoolLiteral(bool_value) => {
                 BoolExpression::Constant(bool_value)
             }
-            Expression::UnaryExpression(expression_type, child) => {
+            Expression::UnaryExpression(operator, child) => {
 
-                match expression_type {
-                    UnaryExpressionType::Not => BoolExpression::Not(self.elaborate_bool_expression(*child)?),
-                    UnaryExpressionType::AsBool => {
+                match operator {
+                    UnaryOperator::Not => BoolExpression::Not(self.elaborate_bool_expression(*child)?),
+                    UnaryOperator::AsBool => {
 
                         let data_type = self.get_expression_type(&child)?;
 
@@ -594,21 +597,21 @@ impl Elaborator {
                         }
 
                     }
-                    UnaryExpressionType::AsByte => todo!()
+                    UnaryOperator::AsByte => todo!()
                 }
             }
-            Expression::BinaryExpression(expression_type, child1, child2) => {
+            Expression::BinaryExpression(operator, child1, child2) => {
 
-                match expression_type {
-                    BinaryExpressionType::And => BoolExpression::And(
+                match operator {
+                    BinaryOperator::And => BoolExpression::And(
                         self.elaborate_bool_expression(*child1)?,
                         self.elaborate_bool_expression(*child2)?
                     ),
-                    BinaryExpressionType::Or => BoolExpression::Or(
+                    BinaryOperator::Or => BoolExpression::Or(
                         self.elaborate_bool_expression(*child1)?,
                         self.elaborate_bool_expression(*child2)?
                     ),
-                    BinaryExpressionType::Equals => {
+                    BinaryOperator::Equals => {
 
                         match self.try_conflate_to_equateable(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteEquals(
@@ -630,7 +633,7 @@ impl Elaborator {
                             _ => todo!()//err!(self.current_todo!())
                         }
                     }
-                    BinaryExpressionType::NotEquals => {
+                    BinaryOperator::NotEquals => {
 
                         match self.try_conflate_to_equateable(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteNotEquals(
@@ -652,7 +655,7 @@ impl Elaborator {
                             _ => todo!()//err!(self.current_todo!())
                         }
                     }
-                    BinaryExpressionType::GreaterThan => {
+                    BinaryOperator::GreaterThan => {
 
                         match self.try_conflate_to_number(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThan(
@@ -666,7 +669,7 @@ impl Elaborator {
                             _ => todo!()//err!(self.current_todo!())
                         }
                     }
-                    BinaryExpressionType::GreaterThanEqual => {
+                    BinaryOperator::GreaterThanEqual => {
 
                         match self.try_conflate_to_number(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteGreaterThanEqual(
@@ -680,7 +683,7 @@ impl Elaborator {
                             _ => todo!()//err!(self.current_todo!())
                         }
                     }
-                    BinaryExpressionType::LessThan => {
+                    BinaryOperator::LessThan => {
                         
                         match self.try_conflate_to_number(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThan(
@@ -694,7 +697,7 @@ impl Elaborator {
                             _ => todo!()//err!(self.current_todo!())
                         }
                     }
-                    BinaryExpressionType::LessThanEqual => {
+                    BinaryOperator::LessThanEqual => {
                         
                         match self.try_conflate_to_number(&child1, &child2)? {
                             Some(ElaboratedDataType::Byte | ElaboratedDataType::GenericNumber) => BoolExpression::ByteLessThanEqual(
@@ -794,7 +797,7 @@ impl Elaborator {
             Expression::NumberLiteral(number_value) => {
                 ByteExpression::Constant(number_value as u8)
             }
-            Expression::UnaryExpression(UnaryExpressionType::AsByte, child) => {
+            Expression::UnaryExpression(UnaryOperator::AsByte, child) => {
 
                 match self.get_expression_type(&child)? {
                     ElaboratedDataType::Bool => ByteExpression::ConvertBool(self.elaborate_bool_expression(*child)?),
@@ -802,16 +805,17 @@ impl Elaborator {
                     _ => todo!()
                 }
             }
-            Expression::BinaryExpression(expression_type, child1, child2) => {
+            Expression::BinaryExpression(operator, child1, child2) => {
 
                 let byte_expression1 = self.elaborate_byte_expression(*child1)?;
                 let byte_expression2 = self.elaborate_byte_expression(*child2)?;
 
-                match expression_type {
-                    BinaryExpressionType::Add => ByteExpression::Add(byte_expression1, byte_expression2),
-                    BinaryExpressionType::Subtract => ByteExpression::Subtract(byte_expression1, byte_expression2),
-                    BinaryExpressionType::Multiply => ByteExpression::Multiply(byte_expression1, byte_expression2),
-                    BinaryExpressionType::Divide => ByteExpression::Divide(byte_expression1, byte_expression2),
+                match operator {
+                    BinaryOperator::Add => ByteExpression::Add(byte_expression1, byte_expression2),
+                    BinaryOperator::Subtract => ByteExpression::Subtract(byte_expression1, byte_expression2),
+                    BinaryOperator::Multiply => ByteExpression::Multiply(byte_expression1, byte_expression2),
+                    BinaryOperator::Divide => ByteExpression::Divide(byte_expression1, byte_expression2),
+                    BinaryOperator::Modulo => ByteExpression::Modulo(byte_expression1, byte_expression2),
                     _ => todo!()
                 }
             }
@@ -842,6 +846,15 @@ impl Elaborator {
             ByteExpression::Divide(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
                 => ByteExpression::Constant(a / b),
 
+            ByteExpression::Divide(other, box ByteExpression::Constant(1))
+                => *other,
+
+            ByteExpression::Modulo(box ByteExpression::Constant(a), box ByteExpression::Constant(b))
+                => ByteExpression::Constant(a % b),
+
+            ByteExpression::Modulo(_, box ByteExpression::Constant(1))
+                => ByteExpression::Constant(0),
+
             _ => byte_expression
         };
 
@@ -863,16 +876,17 @@ impl Elaborator {
             Expression::NumberLiteral(number_value) => {
                 ShortExpression::Constant(number_value as u16)
             }
-            Expression::BinaryExpression(expression_type, child1, child2) => {
+            Expression::BinaryExpression(operator, child1, child2) => {
 
                 let short_expression1 = self.elaborate_short_expression(*child1)?;
                 let short_expression2 = self.elaborate_short_expression(*child2)?;
 
-                match expression_type {
-                    BinaryExpressionType::Add => ShortExpression::Add(short_expression1, short_expression2),
-                    BinaryExpressionType::Subtract => ShortExpression::Subtract(short_expression1, short_expression2),
-                    BinaryExpressionType::Multiply => ShortExpression::Multiply(short_expression1, short_expression2),
-                    BinaryExpressionType::Divide => ShortExpression::Divide(short_expression1, short_expression2),
+                match operator {
+                    BinaryOperator::Add => ShortExpression::Add(short_expression1, short_expression2),
+                    BinaryOperator::Subtract => ShortExpression::Subtract(short_expression1, short_expression2),
+                    BinaryOperator::Multiply => ShortExpression::Multiply(short_expression1, short_expression2),
+                    BinaryOperator::Divide => ShortExpression::Divide(short_expression1, short_expression2),
+                    BinaryOperator::Modulo => ShortExpression::Modulo(short_expression1, short_expression2),
                     _ => todo!()
                 }
             }
@@ -892,6 +906,15 @@ impl Elaborator {
 
             ShortExpression::Divide(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
                 => ShortExpression::Constant(a / b),
+
+            ShortExpression::Divide(other, box ShortExpression::Constant(1))
+                => *other,
+
+            ShortExpression::Modulo(box ShortExpression::Constant(a), box ShortExpression::Constant(b))
+                => ShortExpression::Constant(a % b),
+
+            ShortExpression::Modulo(_, box ShortExpression::Constant(1))
+                => ShortExpression::Constant(0),
 
             _ => short_expression
         };

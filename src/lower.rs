@@ -157,6 +157,21 @@ impl Lowerer {
                     self.bf_code += "]";
 
                 }
+                IRStatement::Compare(temp_block) => {
+
+                    self.jump_to(temp_block.at(0));
+
+                    self.push_code(
+                        ">>>>+<<
+                        [-<-[<]>>]
+                        >[-<<<<+>>>]
+                        >[-]<<[-]<[-]<"
+                    );
+                }
+                IRStatement::Modulo(temp_block) => {
+                    self.jump_to(temp_block.at(0));
+                    self.bf_code += ">[>->+<[>]>[<+>-]<<[<]>-]>[-]<<";
+                }
                 IRStatement::ReadByte(id) => {
                     self.jump_to(id);
                     self.bf_code += ",";
@@ -230,17 +245,6 @@ impl Lowerer {
                         <[>>[-<<->>]<++++++[-<++++++++>]<.[-]]
                         ++++++[-<++++++++>]<.[-]",
                         [ptr, temp_block.at(0)]
-                    );
-                }
-                IRStatement::Compare(temp_block) => {
-
-                    self.jump_to(temp_block.at(0));
-
-                    self.push_code(
-                        ">>>>+<<
-                        [-<-[<]>>]
-                        >[-<<<<+>>>]
-                        >[-]<<[-]<[-]<"
                     );
                 }
                 IRStatement::Loop(id, block, _) => {
