@@ -732,20 +732,27 @@ impl<'a> Parser<'a> {
 
         while let Some(&token) = self.tokens.peek() {
 
-            if *token == Token::End {
-                self.tokens.next();
-                break;
-            }
+            match token {
+                Token::Newline => {
+                    self.tokens.next();
+                    continue;
+                }
+                Token::End => {
+                    self.tokens.next();
+                    break;
+                }
+                // hacky
+                Token::Else => {
+                    break;
+                }
+                _ => {
 
-            // hacky
-            if *token == Token::Else {
-                break;
-            }
+                    statements.push(self.parse_statement()?);
 
-            statements.push(self.parse_statement()?);
-
-            if !self.tokens.is_empty() {
-                self.expect_newline()?;
+                    if !self.tokens.is_empty() {
+                        self.expect_newline()?;
+                    }
+                }
             }
         }
 

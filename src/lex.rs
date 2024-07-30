@@ -309,8 +309,15 @@ fn try_lex_symbol(chars: &mut Peekable<Chars>) -> Result<Option<Token>, ()> {
         symbol_chars.push(*char);
 
         if symbol_chars == "//" {
-            chars.for_each(drop);
+
+            while let Some(char) = chars.next() {
+                if char == '\n' {
+                    return Ok(Some(Token::Comment));
+                }
+            }
+
             return Ok(Some(Token::Comment));
+
         }
 
         if let Some(symbol) = Token::try_parse_symbol(&symbol_chars) {

@@ -105,8 +105,8 @@ pub enum ElaboratedDataType {
     GenericString,
     Stack(Box<ElaboratedDataType>, usize),
     UserEnum(usize),
-    UserStruct(usize)
-    //Array(Rc<DataType>, usize)
+    UserStruct(usize),
+    Array(Box<ElaboratedDataType>, usize)
 }
 
 impl ElaboratedDataType {
@@ -146,7 +146,7 @@ impl ElaboratedDataType {
             Self::Stack(data_type, len) => (len + 1) * (data_type.get_size(user_definitions) + 1) + 1,
             Self::UserEnum(_) => 1,
             Self::UserStruct(struct_id) => user_definitions.structs[*struct_id].size,
-            //Self::Array(data_type, len) => data_type.get_size() * len
+            Self::Array(data_type, len) => data_type.get_size(user_definitions) * len,
             Self::GenericNumber | Self::GenericString => unreachable!()
         }
     }
